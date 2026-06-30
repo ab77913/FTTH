@@ -1,0 +1,9 @@
+geopandas
+shapely
+psycopg2-binary
+pandas
+PyYAML
+loguru
+tqdm
+requests
+scikit-learn

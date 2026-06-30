@@ -1,0 +1,4 @@
+address,lat,lon,unit_count,dpv_type,owner_type,year_built,osm_building_tag
+1600 Pennsylvania Ave NW Washington DC,38.8977,-77.0365,1,single,individual,1985,house
+350 5th Ave New York NY,40.7484,-73.9857,80,multi,llc,1980,apartments
+233 S Wacker Dr Chicago IL,41.8789,-87.6359,120,multi,corporate,1974,commercial

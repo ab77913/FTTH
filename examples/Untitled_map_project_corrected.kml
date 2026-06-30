@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Untitled map project - corrected households</name>
+
+    <Style id="polygonStyle">
+      <LineStyle>
+        <color>ff2dc0fb</color>
+        <width>4</width>
+      </LineStyle>
+      <PolyStyle>
+        <color>40ffffff</color>
+      </PolyStyle>
+    </Style>
+
+    <Style id="householdStyle">
+      <IconStyle>
+        <color>ff00a5ff</color>
+        <scale>1.1</scale>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/shapes/homegardenbusiness.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>
+
+    <Placemark>
+      <name>Florida Polygon</name>
+      <styleUrl>#polygonStyle</styleUrl>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -81.4585,28.5968,0
+              -81.45650000000001,28.5968,0
+              -81.45650000000001,28.5988,0
+              -81.4585,28.5988,0
+              -81.4585,28.5968,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+
+    <Folder>
+      <name>HOUSEHOLD</name>
+
+      <Placemark>
+        <name>4502 Drexel Ave, Orlando, FL 32808, USA</name>
+        <description>Residential household address</description>
+        <styleUrl>#householdStyle</styleUrl>
+        <Point>
+          <coordinates>-81.4572664,28.5974777,0</coordinates>
+        </Point>
+      </Placemark>
+
+      <Placemark>
+        <name>4514 Seybold Ave, Orlando, FL 32808, USA</name>
+        <description>Residential household address</description>
+        <styleUrl>#householdStyle</styleUrl>
+        <Point>
+          <coordinates>-81.4582209,28.598129,0</coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

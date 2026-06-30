@@ -1,0 +1,27 @@
+.venv/
+.venv311/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+uploads/
+data/
+cache/agent5/
+cache/agent5_0_offline/images/
+logs/**/*.log
+.env
+.env.local
+.env.*.local
+google_street_view_analysis.db
+reference/google_street_view_analysis 5/google_street_view_analysis/cache/
+reference/google_street_view_analysis 5/google_street_view_analysis/output/
+reference/google_street_view_analysis 5/google_street_view_analysis/google_street_view_analysis.db
+
+# Large binary / data files removed from history (exceed GitHub 100 MB limit)
+reference/Regrid-Tigeline Fallback Agent.zip
+reference/Regrid-Tigeline Fallback Agent 3/app/tl_2025_us_county.shp
+reference/building_agent 4/building_agent/data/real/nd/NorthDakota.geojson
+reference/image ftth.zip

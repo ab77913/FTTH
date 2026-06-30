@@ -1,0 +1,26 @@
+backend: sqlite
+
+data:
+  footprints_dir: data/footprints
+  google_dir: data/google
+  sample_footprints: ""
+  sample_addresses: data/sample/sample_addresses.csv
+
+database:
+  sqlite_path: data/buildings.db
+  postgis_conn: "postgresql://postgres:password@localhost:5432/buildings"
+
+prefer_source: ms
+
+log:
+  level: INFO
+  file: logs/building_agent.log
+
+thresholds:
+  sfu_max_area_m2: 650
+  mdu_min_area_m2: 300
+  anchor_min_area_m2: 5000
+  elongation_mdu_threshold: 3.0
+  search_radius_m: 15
+  fallback_radius_m: 30
+  min_area_valid_m2: 40

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Ollama Chat – API Reference</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0e1621;--card:#17212b;--border:rgba(255,255,255,.08);--text:#e8eaf2;--muted:#708499;--accent:#5288c1;--green:#4ade80;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{font-family:var(--font);background:var(--bg);color:var(--text);padding:40px 24px;max-width:900px;margin:0 auto;line-height:1.6}
+h1{font-size:1.6rem;margin-bottom:6px}h2{font-size:1.1rem;margin:32px 0 10px;color:var(--accent)}
+h3{font-size:.95rem;margin:20px 0 6px;font-weight:600}
+p{color:var(--muted);font-size:.9rem;margin-bottom:10px}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700;letter-spacing:.05em;margin-right:6px}
+.get{background:#1a3a2a;color:#4ade80}.post{background:#1a2f4a;color:#60a5fa}.del{background:#3a1a1a;color:#f87171}.patch{background:#2a2a1a;color:#facc15}
+.endpoint{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:16px}
+.ep-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.ep-path{font-family:"Cascadia Code","Consolas",monospace;font-size:.88rem}
+.ep-desc{color:var(--muted);font-size:.83rem;margin:4px 0 10px}
+pre{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:14px 16px;overflow-x:auto;font-size:.8rem;font-family:"Cascadia Code","Consolas",monospace;line-height:1.5;margin:8px 0}
+code{background:rgba(0,0,0,.3);border-radius:4px;padding:1px 5px;font-size:.83em;font-family:"Cascadia Code","Consolas",monospace}
+table{width:100%;border-collapse:collapse;font-size:.83rem;margin:8px 0}
+th{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:600}
+td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+td:first-child{font-family:"Cascadia Code","Consolas",monospace;color:#60a5fa}
+td:last-child{color:var(--muted)}
+.tag{display:inline-block;background:rgba(82,136,193,.15);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:.72rem;margin-left:6px}
+.tip{background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.2);border-radius:8px;padding:12px 14px;margin:10px 0;font-size:.83rem;color:#86efac}
+a{color:var(--accent)}
+.nav{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:32px}
+.nav a{color:var(--muted);font-size:.85rem;text-decoration:none;padding:5px 12px;border-radius:6px;background:var(--card);border:1px solid var(--border)}
+.nav a:hover{color:var(--text);border-color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>Ollama Chat API</h1>
+<p>REST API for accessing all Ollama models on this server. Supports text, images, PDFs, DOCX, spreadsheets, and code files.</p>
+
+<div class="nav">
+  <a href="/">← Back to Chat</a>
+  <a href="/api/v1/health">Health Check</a>
+  <a href="/api/v1/models">List Models (JSON)</a>
+</div>
+
+<h2>Base URL</h2>
+<pre>/api/v1/</pre>
+
+<div class="tip">All endpoints return JSON. For streaming responses, the body is newline-delimited JSON (NDJSON). CORS is enabled on all <code>/api/v1/</code> routes.</div>
+
+<!-- ── Health ── -->
+<h2>Health &amp; Discovery</h2>
+
+<div class="endpoint">
+  <div class="ep-head"><span class="badge get">GET</span><span class="ep-path">/api/v1/health</span></div>
+  <div class="ep-desc">Check server status and Ollama connectivity.</div>
+  <pre>curl /api/v1/health</pre>
+  <pre>{"status":"ok","ollama":"reachable","models":13}</pre>
+</div>
+
+<div class="endpoint">
+  <div class="ep-head"><span class="badge get">GET</span><span class="ep-path">/api/v1/models</span></div>
+  <div class="ep-desc">List all available Ollama models with details.</div>
+  <pre>curl /api/v1/models</pre>
+</div>
+
+<!-- ── Chat ── -->
+<h2>Chat</h2>
+
+<div class="endpoint">
+  <div class="ep-head"><span class="badge post">POST</span><span class="ep-path">/api/v1/chat</span><span class="tag">JSON or multipart</span></div>
+  <div class="ep-desc">Send a message and get a response. Supports text, file attachments, and conversation history.</div>
+
+  <h3>Request fields</h3>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+    <tr><td>model</td><td>string</td><td>✓</td><td>Model name, e.g. <code>llama3:latest</code></td></tr>
+    <tr><td>message</td><td>string</td><td>✓*</td><td>User text message (* required if no file)</td></tr>
+    <tr><td>file</td><td>file</td><td>–</td><td>Any file: image, PDF, DOCX, code, CSV…</td></tr>
+    <tr><td>conversation_id</td><td>int</td><td>–</td><td>Continue an existing conversation (history auto-loaded)</td></tr>
+    <tr><td>stream</td><td>bool</td><td>–</td><td>Default <code>false</code>. Set <code>true</code> for NDJSON stream.</td></tr>
+  </table>
+
+  <h3>Text chat (JSON)</h3>
+  <pre>curl -X POST /api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3:latest","message":"Explain quantum computing in 3 sentences."}'</pre>
+
+  <h3>Image analysis (multipart)</h3>
+  <pre>curl -X POST /api/v1/chat \
+  -F "model=qwen2.5vl:latest" \
+  -F "message=What objects are in this image? Describe in detail." \
+  -F "file=@photo.jpg"</pre>
+
+  <h3>PDF / document analysis</h3>
+  <pre>curl -X POST /api/v1/chat \
+  -F "model=qwen2.5:14b" \
+  -F "message=Summarize the key points of this document." \
+  -F "file=@report.pdf"</pre>
+
+  <h3>Code review</h3>
+  <pre>curl -X POST /api/v1/chat \
+  -F "model=deepseek-coder:33b" \
+  -F "message=Review this code for bugs and suggest improvements." \
+  -F "file=@main.py"</pre>
+
+  <h3>Continue a conversation</h3>
+  <pre>curl -X POST /api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3:latest","message":"What did I just ask you?","conversation_id":42}'</pre>
+
+  <h3>Non-streaming response</h3>
+  <pre>{
+  "success": true,
+  "response": "Quantum computing uses quantum bits (qubits)...",
+  "model": "llama3:latest",
+  "conversation_id": 42
+}</pre>
+
+  <h3>Streaming (stream=true)</h3>
+  <pre>curl -X POST /api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3:latest","message":"Tell me a story","stream":true}'</pre>
+  <pre>{"type":"meta","conversation_id":43}
+{"message":{"role":"assistant","content":"Once "},"done":false}
+{"message":{"role":"assistant","content":"upon "},"done":false}
+{"message":{"role":"assistant","content":"a time..."},"done":false}
+{"message":{"role":"assistant","content":""},"done":true,"total_duration":2341000000}</pre>
+</div>
+
+<!-- ── Conversations ── -->
+<h2>Conversations</h2>
+
+<div class="endpoint">
+  <div class="ep-head"><span class="badge get">GET</span><span class="ep-path">/api/v1/conversations</span></div>
+  <div class="ep-desc">List all conversations (newest first).</div>
+  <pre>curl /api/v1/conversations</pre>
+  <pre>[{"id":1,"title":"Explain Python","model":"llama3:latest","updated_at":"2026-06-18 12:00:00","last_message":"Python is..."}]</pre>
+</div>
+
+<div class="endpoint">
+  <div class="ep-head"><span class="badge get">GET</span><span class="ep-path">/api/v1/conversations/{id}</span></div>
+  <div class="ep-desc">Get full conversation including all messages and attachment metadata.</div>
+  <pre>curl /api/v1/conversations/42</pre>
+  <pre>{"conversation":{...},"messages":[{"id":1,"role":"user","content":"...","attachment_name":"photo.jpg","attachment_type":"image","attachment_path":"abc123.jpg"}]}</pre>
+</div>
+
+<div class="endpoint">
+  <div class="ep-head"><span class="badge post">POST</span><span class="ep-path">/api/v1/conversations</span></div>
+  <div class="ep-desc">Create a new empty conversation.</div>
+  <pre>curl -X POST /api/v1/conversations \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3:latest","title":"My new chat"}'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="ep-head"><span class="badge patch">PATCH</span><span class="ep-path">/api/v1/conversations/{id}</span></div>
+  <div class="ep-desc">Rename a conversation or change its model.</div>
+  <pre>curl -X PATCH /api/v1/conversations/42 \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Renamed","model":"deepseek-coder:33b"}'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="ep-head"><span class="badge del">DELETE</span><span class="ep-path">/api/v1/conversations/{id}</span></div>
+  <div class="ep-desc">Permanently delete a conversation and all its messages.</div>
+  <pre>curl -X DELETE /api/v1/conversations/42</pre>
+</div>
+
+<!-- ── Python example ── -->
+<h2>Python Example</h2>
+<pre>import requests
+
+BASE = "/api/v1"
+
+# Simple text chat
+r = requests.post(f"{BASE}/chat", json={
+    "model": "llama3:latest",
+    "message": "Write a haiku about AI"
+})
+print(r.json()["response"])
+
+# Image analysis
+with open("photo.jpg", "rb") as f:
+    r = requests.post(f"{BASE}/chat", files={"file": f}, data={
+        "model": "qwen2.5vl:latest",
+        "message": "Describe what you see"
+    })
+print(r.json()["response"])
+
+# Multi-turn conversation
+conv = None
+for user_msg in ["Hello", "What did I just say?"]:
+    r = requests.post(f"{BASE}/chat", json={
+        "model": "llama3:latest",
+        "message": user_msg,
+        "conversation_id": conv,
+    })
+    data = r.json()
+    conv = data["conversation_id"]   # reuse for next turn
+    print(f"Bot: {data['response']}")
+</pre>
+
+<!-- ── Supported files ── -->
+<h2>Supported File Types</h2>
+<table>
+  <tr><th>Category</th><th>Extensions</th><th>How processed</th></tr>
+  <tr><td>Images</td><td>png, jpg, jpeg, gif, webp, bmp, tiff</td><td>Sent as base64 to vision models</td></tr>
+  <tr><td>Documents</td><td>pdf, docx, doc</td><td>Text extracted, appended to prompt</td></tr>
+  <tr><td>Spreadsheets</td><td>xlsx, xls, csv</td><td>Data read row-by-row, appended to prompt</td></tr>
+  <tr><td>Code &amp; text</td><td>py, js, ts, java, go, rs, c, cpp, html, css, json, yaml, sql, sh, …</td><td>Content appended to prompt</td></tr>
+  <tr><td>Any text file</td><td>txt, md, log, conf, env, toml, …</td><td>Content appended to prompt</td></tr>
+</table>
+
+<div class="tip" style="margin-top:32px">Maximum file content sent to LLM: 80,000 characters (truncated if larger). Image files have no size limit beyond what the model supports.</div>
+
+<p style="margin-top:32px;color:var(--muted);font-size:.78rem">Ollama Chat Server · <a href="/">Open Chat UI</a></p>
+</body>
+</html>

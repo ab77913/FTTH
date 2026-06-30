@@ -1,0 +1,14 @@
+.venv*
+__pycache__/
+*.pyc
+.git/
+uploads/
+cache/
+data/app_accounts.db
+.env
+reference/
+*.kmz
+*.kml
+node_modules/
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Agent0 10 House Discovery Test</name>
+    <description>
+      Polygon-only fixture for validating Agent 0 house discovery.
+      The KMZ intentionally contains no household address placemarks inside the polygon.
+      Agent 0 should discover new addresses from Google reverse geocoding.
+    </description>
+    <Style id="agent0-test-poly">
+      <LineStyle>
+        <color>ff00a5ff</color>
+        <width>3</width>
+      </LineStyle>
+      <PolyStyle>
+        <color>3300a5ff</color>
+      </PolyStyle>
+    </Style>
+    <Folder>
+      <name>AGENT0_TEST_POLYGON</name>
+      <Placemark>
+        <name>Agent0 Test - Elizabeth/Noe Residential Block</name>
+        <description>
+          Expected Agent 0 result with default grid_step=0.00025 and dedup_distance_m=20:
+          at least 10 new rooftop addresses, including addresses on Elizabeth St and Noe St.
+        </description>
+        <styleUrl>#agent0-test-poly</styleUrl>
+        <Polygon>
+          <outerBoundaryIs>
+            <LinearRing>
+              <coordinates>
+                -122.4334,37.7518,0
+                -122.4308,37.7518,0
+                -122.4308,37.7540,0
+                -122.4334,37.7540,0
+                -122.4334,37.7518,0
+              </coordinates>
+            </LinearRing>
+          </outerBoundaryIs>
+        </Polygon>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

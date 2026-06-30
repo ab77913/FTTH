@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Ollama Chat</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --sb:#17212b;--sb-h:#202e3d;--sb-a:#2b5278;
+  --main:#0e1621;--hdr:#17212b;
+  --u:#2b5278;--b:#182533;
+  --border:rgba(255,255,255,.07);
+  --accent:#5288c1;--text:#e8eaf2;--muted:#708499;
+  --online:#4ade80;--danger:#e05555;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+body{font-family:var(--font);background:var(--main);color:var(--text);height:100vh;overflow:hidden;display:flex}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px}
+
+/* ── Sidebar ── */
+#sb{width:320px;min-width:320px;background:var(--sb);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100vh;transition:transform .25s}
+.sb-hd{height:60px;padding:0 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sb-hd h1{flex:1;font-size:1.05rem;font-weight:700}
+.sb-srch{padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sb-srch input{width:100%;background:var(--main);border:1px solid var(--border);border-radius:20px;padding:7px 14px 7px 36px;color:var(--text);font-size:.85rem;outline:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%23708499' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:12px center;transition:border-color .15s}
+.sb-srch input::placeholder{color:var(--muted)}
+.sb-srch input:focus{border-color:var(--accent)}
+#clist{flex:1;overflow-y:auto}
+.ci{display:flex;align-items:center;gap:12px;padding:10px 16px;cursor:pointer;transition:background .12s;border-bottom:1px solid var(--border);position:relative}
+.ci:hover{background:var(--sb-h)}.ci.active{background:var(--sb-a)}.ci:hover .delbtn{opacity:1}
+.cav{width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,#3a6fa8,#2b5278);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1rem;flex-shrink:0;text-transform:uppercase;user-select:none}
+.cbody{flex:1;min-width:0}.ctitle{font-size:.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cprev{font-size:.76rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.cmeta{text-align:right;flex-shrink:0}.ctime{font-size:.7rem;color:var(--muted)}
+.delbtn{position:absolute;right:8px;top:8px;opacity:0;background:none;border:none;color:var(--danger);cursor:pointer;padding:4px;border-radius:4px;line-height:0;transition:opacity .15s,background .15s}
+.delbtn:hover{background:rgba(224,85,85,.15)}
+.sb-empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:.85rem;line-height:1.7}
+.ibt{width:36px;height:36px;border-radius:50%;border:none;background:transparent;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;flex-shrink:0}
+.ibt:hover{background:rgba(255,255,255,.08);color:var(--text)}.ibt.red:hover{color:var(--danger)}
+
+/* ── Main ── */
+#main{flex:1;display:flex;flex-direction:column;height:100vh;overflow:hidden;min-width:0}
+#empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:var(--muted);user-select:none}
+#empty .ring{width:80px;height:80px;border-radius:50%;border:2px solid rgba(82,136,193,.3);display:flex;align-items:center;justify-content:center}
+#empty h2{font-size:1.15rem;color:var(--text);opacity:.55}
+#active{display:none;flex-direction:column;flex:1;overflow:hidden}
+
+/* ── Chat header ── */
+.chdr{height:60px;background:var(--hdr);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 16px;flex-shrink:0}
+.chdr-av{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#3a6fa8,#2b5278);display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700;flex-shrink:0;text-transform:uppercase}
+.chdr-info{flex:1;min-width:0}
+.chdr-title{font-size:.92rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chdr-sub{font-size:.72rem;color:var(--online);margin-top:1px}
+.msel-wrap{display:flex;align-items:center;gap:6px}
+select{background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:8px;font-size:.78rem;cursor:pointer;outline:none;max-width:200px}
+select:focus{border-color:var(--accent)}select option{background:#1e2a38}
+
+/* ── Messages ── */
+#msgs{flex:1;overflow-y:auto;padding:16px 20px 8px;display:flex;flex-direction:column;scroll-behavior:smooth}
+.dsep{display:flex;align-items:center;gap:10px;margin:14px 0 6px;color:var(--muted);font-size:.72rem}
+.dsep::before,.dsep::after{content:'';flex:1;height:1px;background:var(--border)}
+.mrow{display:flex;align-items:flex-end;gap:8px;margin-bottom:2px;animation:mIn .18s ease}
+@keyframes mIn{from{opacity:0;transform:translateY(5px)}}
+.mrow.user{flex-direction:row-reverse}.mrow.gtop{margin-top:10px}.mrow.first .bub{border-top-right-radius:4px}
+.mrow.assistant.first .bub{border-top-left-radius:4px}
+.mav{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#3a6fa8,#2b5278);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;flex-shrink:0;text-transform:uppercase}
+.mav.inv{visibility:hidden}
+.bwrap{display:flex;flex-direction:column;max-width:min(65%,580px)}
+.mrow.user .bwrap{align-items:flex-end}.mrow.assistant .bwrap{align-items:flex-start}
+.bub{padding:9px 13px;border-radius:16px;font-size:.875rem;line-height:1.6;word-break:break-word;position:relative}
+.mrow.user .bub{background:var(--u);border-bottom-right-radius:4px;color:#fff}
+.mrow.assistant .bub{background:var(--b);border-bottom-left-radius:4px;border:1px solid rgba(255,255,255,.06);color:var(--text)}
+.mtime{font-size:.65rem;color:var(--muted);margin-top:3px;padding:0 3px;display:flex;align-items:center;gap:3px}
+
+/* image in bubble */
+.msg-img{display:block;max-width:260px;max-height:260px;border-radius:10px;cursor:pointer;transition:opacity .15s;margin-bottom:6px;object-fit:cover}
+.msg-img:hover{opacity:.9}
+
+/* file chip in bubble */
+.fchip{display:inline-flex;align-items:center;gap:8px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:7px 11px;margin-bottom:6px;font-size:.8rem;max-width:260px;cursor:default}
+.fchip svg{flex-shrink:0;opacity:.7}
+.fchip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.bub pre{background:rgba(0,0,0,.4);border-radius:8px;padding:10px 12px;overflow-x:auto;margin:6px 0;font-size:.78em;font-family:"Cascadia Code","Consolas",monospace;border:1px solid rgba(255,255,255,.08);white-space:pre}
+.bub code{background:rgba(0,0,0,.3);border-radius:4px;padding:1px 5px;font-size:.82em;font-family:"Cascadia Code","Consolas",monospace}
+.bub pre code{background:none;padding:0;font-size:inherit}
+.think{color:var(--muted);font-style:italic;font-size:.82em;border-left:2px solid rgba(82,136,193,.4);padding-left:10px;margin:4px 0}
+.think-lbl{font-size:.68em;color:var(--accent);font-style:normal;font-weight:600;letter-spacing:.05em;display:block;margin-bottom:3px}
+
+/* typing dots */
+.trow{display:flex;align-items:flex-end;gap:8px;margin-top:10px;margin-bottom:2px}
+.tbub{background:var(--b);border:1px solid rgba(255,255,255,.06);border-radius:16px;border-bottom-left-radius:4px;padding:10px 14px;display:flex;gap:4px;align-items:center}
+.td{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:tdB 1.2s infinite}
+.td:nth-child(2){animation-delay:.18s}.td:nth-child(3){animation-delay:.36s}
+@keyframes tdB{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+
+/* ── Input area ── */
+.inp-area{background:var(--hdr);border-top:1px solid var(--border);padding:10px 16px 14px;flex-shrink:0}
+
+/* attachment preview strip */
+#att-prev{display:none;margin-bottom:8px;padding:8px 10px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;align-items:center;gap:10px}
+.att-thumb{width:48px;height:48px;border-radius:6px;object-fit:cover;flex-shrink:0}
+.att-info{flex:1;min-width:0}
+.att-name{font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.att-size{font-size:.7rem;color:var(--muted);margin-top:2px}
+.att-rm{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;border-radius:50%;line-height:0;transition:color .15s,background .15s;flex-shrink:0}
+.att-rm:hover{color:var(--danger);background:rgba(224,85,85,.15)}
+.att-icon{width:48px;height:48px;border-radius:6px;background:rgba(82,136,193,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--accent)}
+
+.inp-box{display:flex;align-items:flex-end;gap:8px;background:var(--main);border:1px solid var(--border);border-radius:24px;padding:7px 7px 7px 14px;transition:border-color .15s}
+.inp-box:focus-within{border-color:var(--accent)}
+.att-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 6px;border-radius:8px;line-height:0;transition:color .15s,background .15s;flex-shrink:0;align-self:flex-end;margin-bottom:2px}
+.att-btn:hover{color:var(--accent);background:rgba(82,136,193,.15)}
+textarea{flex:1;background:transparent;border:none;color:var(--text);font-size:.88rem;font-family:var(--font);resize:none;outline:none;min-height:24px;max-height:150px;line-height:1.5;padding:2px 0}
+textarea::placeholder{color:var(--muted)}
+.sbtn{width:36px;height:36px;border-radius:50%;border:none;background:var(--accent);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .15s,transform .1s,opacity .15s}
+.sbtn:hover:not(:disabled){background:#6699d4}.sbtn:active:not(:disabled){transform:scale(.9)}.sbtn:disabled{opacity:.35;cursor:not-allowed}
+.inp-hint{font-size:.68rem;color:var(--muted);text-align:center;margin-top:6px}
+
+/* ── Lightbox ── */
+#lb{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;align-items:center;justify-content:center;z-index:200;cursor:zoom-out}
+#lb.show{display:flex}
+#lb img{max-width:90vw;max-height:90vh;border-radius:8px;object-fit:contain}
+
+/* ── Confirm ── */
+#cfm{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100}
+#cfm.show{display:flex}
+.cfm-box{background:#1e2a38;border:1px solid var(--border);border-radius:12px;padding:24px 28px;max-width:320px;width:90%;text-align:center}
+.cfm-box h3{margin-bottom:8px;font-size:.95rem}
+.cfm-box p{color:var(--muted);font-size:.83rem;margin-bottom:20px}
+.cfm-btns{display:flex;gap:10px;justify-content:center}
+.btn-c{flex:1;padding:8px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--text);cursor:pointer;font-size:.85rem}
+.btn-d{flex:1;padding:8px;border-radius:8px;background:#7f1d1d;border:1px solid var(--danger);color:#fca5a5;cursor:pointer;font-size:.85rem}
+.btn-c:hover{background:rgba(255,255,255,.1)}.btn-d:hover{background:#991b1b}
+
+/* ── Mobile ── */
+@media(max-width:768px){
+  #sb{position:fixed;z-index:20;left:0;top:0;bottom:0}
+  #sb.hidden{transform:translateX(-100%)}
+  .bbtn{display:flex!important}
+}
+.bbtn{display:none}
+</style>
+</head>
+<body>
+
+<!-- Lightbox -->
+<div id="lb" onclick="this.classList.remove('show')"><img id="lb-img" src="" alt=""/></div>
+
+<!-- Confirm dialog -->
+<div id="cfm">
+  <div class="cfm-box">
+    <h3>Delete Conversation</h3>
+    <p>All messages in this chat will be permanently deleted.</p>
+    <div class="cfm-btns">
+      <button class="btn-c" onclick="closeCfm()">Cancel</button>
+      <button class="btn-d" onclick="doCfmDel()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sidebar -->
+<div id="sb">
+  <div class="sb-hd">
+    <h1>Ollama Chat</h1>
+    <button class="ibt" onclick="newChat()" title="New chat">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </div>
+  <div class="sb-srch"><input id="srch" type="text" placeholder="Search conversations…" oninput="filterC(this.value)"/></div>
+  <div id="clist"><div class="sb-empty">No chats yet.<br>Press + to start.</div></div>
+</div>
+
+<!-- Main -->
+<div id="main">
+  <div id="empty">
+    <div class="ring">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#5288c1" stroke-width="1.5">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    </div>
+    <h2>Ollama Chat</h2>
+    <p>Select a conversation or press + to start</p>
+  </div>
+
+  <div id="active">
+    <div class="chdr">
+      <button class="ibt bbtn" onclick="goBack()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+      </button>
+      <div class="chdr-av" id="hav">A</div>
+      <div class="chdr-info">
+        <div class="chdr-title" id="htitle">Chat</div>
+        <div class="chdr-sub"  id="hsub">online</div>
+      </div>
+      <div class="msel-wrap">
+        <select id="msel" onchange="onModelChg(this.value)"><option value="">Loading…</option></select>
+      </div>
+      <button class="ibt red" onclick="askDel()" title="Delete chat">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      </button>
+    </div>
+
+    <div id="msgs"></div>
+
+    <div class="inp-area">
+      <!-- attachment preview -->
+      <div id="att-prev">
+        <div id="att-icon-wrap"></div>
+        <div class="att-info">
+          <div class="att-name" id="att-nm">filename</div>
+          <div class="att-size" id="att-sz">0 KB</div>
+        </div>
+        <button class="att-rm" onclick="clearAtt()" title="Remove attachment">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <!-- input row -->
+      <div class="inp-box">
+        <button class="att-btn" onclick="document.getElementById('finput').click()" title="Attach file">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
+        <input type="file" id="finput" style="display:none" onchange="onFile(this)" accept="*/*"/>
+        <textarea id="inp" placeholder="Message…" rows="1" onkeydown="onKey(event)" oninput="autoH(this)"></textarea>
+        <button class="sbtn" id="sbtn" onclick="send()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+      <p class="inp-hint">Enter to send &nbsp;·&nbsp; Shift+Enter new line &nbsp;·&nbsp; 📎 to attach any file</p>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════ State ═══════
+let convs=[], msgs=[], activeId=null, models=[], streaming=false;
+let pendDel=null, curFile=null, curFileURL=null;
+
+// ═══════ Boot ═══════
+(async()=>{ await Promise.all([loadModels(), loadConvs()]); })();
+
+// ═══════ Models ═══════
+async function loadModels(){
+  try{
+    const r=await fetch("/api/models"), d=await r.json();
+    models=(d.models||[]).filter(m=>!m.name.includes("embed"));
+    const s=document.getElementById("msel");
+    s.innerHTML=models.map(m=>`<option value="${m.name}">${m.name} (${m.details?.parameter_size||"?"})</option>`).join("");
+  }catch{}
+}
+function onModelChg(v){
+  if(activeId) fetch(`/api/conversations/${activeId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:v})});
+  const c=convs.find(c=>c.id===activeId); if(c)c.model=v;
+  document.getElementById("hsub").textContent=v||"Select a model";
+}
+
+// ═══════ Conversations ═══════
+async function loadConvs(){
+  const r=await fetch("/api/conversations"); convs=await r.json(); renderClist(convs);
+}
+function renderClist(list){
+  const el=document.getElementById("clist");
+  if(!list.length){el.innerHTML='<div class="sb-empty">No chats yet.<br>Press + to start.</div>';return;}
+  el.innerHTML=list.map(c=>{
+    const av=(c.title||"?")[0], tm=fmtSb(c.updated_at);
+    const lm=(c.last_message||"No messages yet").replace(/</g,"&lt;").replace(/\n/g," ").slice(0,46)+(c.last_message?.length>46?"…":"");
+    const act=c.id===activeId?"active":"";
+    return`<div class="ci ${act}" data-id="${c.id}" onclick="openConv(${c.id})">
+  <div class="cav">${esc(av)}</div>
+  <div class="cbody"><div class="ctitle">${esc(c.title||"New Chat")}</div><div class="cprev">${lm}</div></div>
+  <div class="cmeta"><span class="ctime">${tm}</span></div>
+  <button class="delbtn" onclick="askDel(event,${c.id})" title="Delete">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+  </button>
+</div>`;
+  }).join("");
+}
+function filterC(q){
+  renderClist(q.trim()?convs.filter(c=>(c.title||"").toLowerCase().includes(q.toLowerCase())):convs);
+}
+
+// ═══════ Open / New ═══════
+async function openConv(id){
+  if(streaming)return;
+  activeId=id; renderClist(convs);
+  const r=await fetch(`/api/conversations/${id}`), d=await r.json();
+  const conv=d.conversation; msgs=d.messages||[];
+  const sel=document.getElementById("msel");
+  if(conv.model&&models.find(m=>m.name===conv.model)) sel.value=conv.model;
+  else if(models.length) sel.value=models[0].name;
+  document.getElementById("hav").textContent=(conv.title||"?")[0].toUpperCase();
+  document.getElementById("htitle").textContent=conv.title||"New Chat";
+  document.getElementById("hsub").textContent=sel.value||"Select a model";
+  showChat(); renderMsgs();
+}
+function newChat(){
+  if(streaming)return;
+  activeId=null; msgs=[];
+  const sel=document.getElementById("msel"); if(models.length)sel.value=models[0].name;
+  document.getElementById("hav").textContent="N";
+  document.getElementById("htitle").textContent="New Chat";
+  document.getElementById("hsub").textContent=sel.value||"Select a model";
+  document.getElementById("msgs").innerHTML="";
+  showChat();
+  document.querySelectorAll(".ci").forEach(el=>el.classList.remove("active"));
+  document.getElementById("inp").focus();
+  if(window.innerWidth<=768)document.getElementById("sb").classList.add("hidden");
+}
+function showChat(){
+  document.getElementById("empty").style.display="none";
+  document.getElementById("active").style.display="flex";
+  if(window.innerWidth<=768)document.getElementById("sb").classList.add("hidden");
+}
+function goBack(){
+  document.getElementById("sb").classList.remove("hidden");
+  document.getElementById("active").style.display="none";
+  document.getElementById("empty").style.display="";
+}
+
+// ═══════ Render messages ═══════
+function renderMsgs(){
+  const w=document.getElementById("msgs"); w.innerHTML="";
+  let lDate=null,lRole=null;
+  msgs.forEach((m,i)=>{
+    const ds=dayStr(m.created_at);
+    if(ds!==lDate){
+      const sep=document.createElement("div"); sep.className="dsep"; sep.textContent=fmtDate(m.created_at);
+      w.appendChild(sep); lDate=ds; lRole=null;
+    }
+    const newG=m.role!==lRole, isLast=i===msgs.length-1||msgs[i+1]?.role!==m.role;
+    addBubble(w,m,newG,isLast); lRole=m.role;
+  });
+  w.scrollTop=w.scrollHeight;
+}
+
+function addBubble(container,msg,isFirst,isLast){
+  const row=document.createElement("div");
+  row.className=`mrow ${msg.role}${isFirst?" gtop first":""}`;
+  if(msg.role==="assistant"){
+    const av=document.createElement("div"); av.className=`mav${isLast?"":" inv"}`; av.textContent="AI";
+    row.appendChild(av);
+  }
+  const bw=document.createElement("div"); bw.className="bwrap";
+  const bub=document.createElement("div"); bub.className="bub";
+
+  // ── attachment display
+  const atype=msg.attachment_type, aname=msg.attachment_name, apath=msg.attachment_path;
+  const aprev=msg.attachment_preview; // object URL for freshly-sent
+
+  if(atype==="image"){
+    const src=aprev||(apath?`/uploads/${apath}`:null);
+    if(src){
+      const img=document.createElement("img");
+      img.src=src; img.className="msg-img"; img.alt=aname||"image";
+      img.onclick=()=>openLB(src);
+      bub.appendChild(img);
+    }
+  } else if(aname){
+    const chip=document.createElement("div"); chip.className="fchip";
+    chip.innerHTML=`${fileIcon(aname)}<span>${esc(aname)}</span>`;
+    bub.appendChild(chip);
+  }
+
+  // ── text content
+  const text=msg.content||"";
+  if(text.trim()){
+    const td=document.createElement("div"); td.innerHTML=mdRender(text); bub.appendChild(td);
+  }
+
+  const te=document.createElement("div"); te.className="mtime";
+  te.innerHTML=`${fmtTime(msg.created_at)}${msg.role==="user"?` <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`:""}`;
+  bw.appendChild(bub); bw.appendChild(te); row.appendChild(bw); container.appendChild(row);
+  return bub;
+}
+
+// ═══════ Attachment handling ═══════
+function onFile(input){
+  const f=input.files[0]; if(!f)return;
+  curFile=f;
+  if(curFileURL){URL.revokeObjectURL(curFileURL); curFileURL=null;}
+
+  const prev=document.getElementById("att-prev");
+  const iconWrap=document.getElementById("att-icon-wrap");
+  document.getElementById("att-nm").textContent=f.name;
+  document.getElementById("att-sz").textContent=fmtSize(f.size);
+
+  if(f.type.startsWith("image/")){
+    curFileURL=URL.createObjectURL(f);
+    iconWrap.innerHTML=`<img class="att-thumb" src="${curFileURL}" alt="preview"/>`;
+  } else {
+    iconWrap.innerHTML=`<div class="att-icon">${fileIcon(f.name)}</div>`;
+  }
+  prev.style.display="flex";
+  input.value=""; // reset so same file can be re-selected
+}
+
+function clearAtt(){
+  curFile=null;
+  if(curFileURL){URL.revokeObjectURL(curFileURL); curFileURL=null;}
+  document.getElementById("att-prev").style.display="none";
+}
+
+// ═══════ Send ═══════
+async function send(){
+  const inputEl=document.getElementById("inp");
+  const text=inputEl.value.trim();
+  if((!text&&!curFile)||streaming) return;
+  const model=document.getElementById("msel").value;
+  if(!model){alert("Please select a model first.");return;}
+
+  streaming=true;
+  document.getElementById("sbtn").disabled=true;
+  inputEl.value=""; inputEl.style.height="auto";
+
+  // Snapshot attachment (clear UI immediately)
+  const file=curFile, fileURL=curFileURL, fileName=file?.name, fileType=fileCat(file?.name||"");
+  clearAtt();
+
+  // User message object for local state
+  const uMsg={
+    role:"user",content:text,created_at:new Date().toISOString(),
+    attachment_name:fileName||null, attachment_type:file?fileType:null,
+    attachment_preview:fileURL||null, attachment_path:null,
+  };
+  msgs.push(uMsg);
+  const w=document.getElementById("msgs");
+  addBubble(w,uMsg,true,true);
+  w.scrollTop=w.scrollHeight;
+
+  // Typing indicator
+  const trow=document.createElement("div"); trow.className="trow";
+  trow.innerHTML=`<div class="mav">AI</div><div class="tbub"><div class="td"></div><div class="td"></div><div class="td"></div></div>`;
+  w.appendChild(trow); w.scrollTop=w.scrollHeight;
+
+  let acc="", asBub=null;
+
+  try{
+    const fd=new FormData();
+    if(activeId) fd.append("conversation_id", activeId);
+    fd.append("model", model);
+    fd.append("message", text);
+    if(file) fd.append("file", file);
+
+    const res=await fetch("/api/chat",{method:"POST",body:fd});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader=res.body.getReader(), dec=new TextDecoder();
+    let buf="";
+    while(true){
+      const {done,value}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split("\n"); buf=lines.pop();
+      for(const line of lines){
+        if(!line.trim()) continue;
+        try{
+          const obj=JSON.parse(line);
+          // meta packet — capture new conversation_id
+          if(obj.type==="meta"){
+            if(!activeId&&obj.conversation_id){
+              activeId=obj.conversation_id;
+              document.querySelectorAll(".ci").forEach(el=>el.classList.remove("active"));
+            }
+            continue;
+          }
+          if(obj.error) throw new Error(obj.error);
+          const tok=obj.message?.content;
+          if(tok){
+            if(!asBub){
+              trow.remove();
+              const asMsg={role:"assistant",content:"",created_at:new Date().toISOString()};
+              msgs.push(asMsg); asBub=addBubble(w,asMsg,true,true);
+            }
+            acc+=tok; asBub.innerHTML=mdRender(acc); w.scrollTop=w.scrollHeight;
+          }
+        }catch{}
+      }
+    }
+  }catch(err){
+    trow.remove();
+    if(!asBub){
+      const er=document.createElement("div"); er.className="mrow assistant gtop";
+      er.innerHTML=`<div class="mav">!</div><div class="bwrap"><div class="bub" style="color:#f87171">Error: ${esc(err.message)}</div></div>`;
+      w.appendChild(er);
+    }
+  }finally{
+    trow.remove();
+    if(acc){const lm=msgs[msgs.length-1]; if(lm?.role==="assistant")lm.content=acc;}
+    await loadConvs(); renderClist(convs);
+    streaming=false; document.getElementById("sbtn").disabled=false;
+    document.getElementById("inp").focus(); w.scrollTop=w.scrollHeight;
+  }
+}
+
+// ═══════ Delete ═══════
+function askDel(e,id){
+  if(e)e.stopPropagation();
+  pendDel=id??activeId; if(!pendDel)return;
+  document.getElementById("cfm").classList.add("show");
+}
+function closeCfm(){pendDel=null;document.getElementById("cfm").classList.remove("show");}
+async function doCfmDel(){
+  if(!pendDel)return closeCfm();
+  await fetch(`/api/conversations/${pendDel}`,{method:"DELETE"});
+  convs=convs.filter(c=>c.id!==pendDel);
+  if(activeId===pendDel){activeId=null;msgs=[];document.getElementById("active").style.display="none";document.getElementById("empty").style.display="";}
+  pendDel=null; closeCfm(); renderClist(convs);
+}
+
+// ═══════ Lightbox ═══════
+function openLB(src){document.getElementById("lb-img").src=src;document.getElementById("lb").classList.add("show");}
+
+// ═══════ Markdown renderer ═══════
+function mdRender(raw){
+  if(!raw)return"";
+  const codeB=[]; const thinkB=[];
+  let t=raw.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{
+    const i=codeB.length;
+    codeB.push(`<pre><code>${esc(c.trim())}</code></pre>`);
+    return`\x00C${i}\x00`;
+  });
+  t=t.replace(/<think>([\s\S]*?)<\/think>/gi,(_,c)=>{
+    const i=thinkB.length;
+    thinkB.push(`<div class="think"><span class="think-lbl">Thinking…</span>${esc(c.trim())}</div>`);
+    return`\x00T${i}\x00`;
+  });
+  t=esc(t);
+  t=t.replace(/`([^`\n]+)`/g,(_,c)=>`<code>${c}</code>`);
+  t=t.replace(/\*\*(.+?)\*\*/gs,"<strong>$1</strong>");
+  t=t.replace(/\*(.+?)\*/gs,"<em>$1</em>");
+  t=t.replace(/^#{1,6}\s+(.+)$/gm,"<strong>$1</strong>");
+  t=t.replace(/^[-*]\s+(.+)$/gm,"• $1");
+  codeB.forEach((b,i)=>{t=t.replace(`\x00C${i}\x00`,b);});
+  thinkB.forEach((b,i)=>{t=t.replace(`\x00T${i}\x00`,b);});
+  return t;
+}
+
+// ═══════ File helpers ═══════
+function fileCat(name){
+  const e=(name||"").split(".").pop().toLowerCase();
+  if(["png","jpg","jpeg","gif","webp","bmp","tiff"].includes(e)) return"image";
+  if(["pdf"].includes(e)) return"pdf";
+  if(["docx","doc"].includes(e)) return"docx";
+  if(["xlsx","xls"].includes(e)) return"spreadsheet";
+  return"text";
+}
+function fileIcon(name){
+  const cat=fileCat(name||"");
+  const icons={
+    image:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`,
+    pdf:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+    docx:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
+    spreadsheet:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+    text:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+  };
+  return icons[cat]||icons.text;
+}
+function fmtSize(b){if(b<1024)return`${b} B`;if(b<1048576)return`${(b/1024).toFixed(1)} KB`;return`${(b/1048576).toFixed(1)} MB`;}
+
+// ═══════ Date/time utils ═══════
+function parseD(s){if(!s)return new Date();return new Date(s.includes("T")?s:s.replace(" ","T")+"Z");}
+function dayStr(s){const d=parseD(s);return`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;}
+function fmtTime(s){return parseD(s).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});}
+function fmtDate(s){
+  const d=parseD(s),n=new Date(),y=new Date(n);y.setDate(n.getDate()-1);
+  if(dayStr(s)===dayStr(n.toISOString()))return"Today";
+  if(dayStr(s)===dayStr(y.toISOString()))return"Yesterday";
+  return d.toLocaleDateString([],{month:"long",day:"numeric",year:"numeric"});
+}
+function fmtSb(s){
+  const d=parseD(s),n=new Date();
+  if(dayStr(s)===dayStr(n.toISOString()))return d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+  const y=new Date(n);y.setDate(n.getDate()-1);
+  if(dayStr(s)===dayStr(y.toISOString()))return"Yesterday";
+  return d.toLocaleDateString([],{month:"short",day:"numeric"});
+}
+function esc(s){return(s??'').toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function onKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}
+function autoH(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,150)+"px";}
+</script>
+</body>
+</html>

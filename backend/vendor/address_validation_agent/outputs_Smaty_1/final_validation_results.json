@@ -1,0 +1,26 @@
+[
+  {
+    "source_file":"6BA8.csv",
+    "row_id":"0",
+    "address_id":"0",
+    "raw_address":"212 WILD SPRING CT",
+    "canonical_address":"212 WILD SPRING CT LEXINGTON SC",
+    "smarty_standardized_address":"212 Wild Spring Ct",
+    "melissa_standardized_address":null,
+    "chosen_standardized_address":"212 Wild Spring Ct",
+    "smarty_dpv":"Y",
+    "melissa_dpv":null,
+    "smarty_zip_plus_4":"29072-7179",
+    "melissa_zip_plus_4":null,
+    "smarty_vacant":false,
+    "melissa_vacant":null,
+    "smarty_record_type":"S",
+    "melissa_record_type":null,
+    "chosen_provider":"smarty",
+    "structure_hint":"SFU_HINT",
+    "confidence_score":70,
+    "validation_status":"MANUAL_REVIEW",
+    "exception_reason":"major conflict between providers",
+    "comparison_reason":"MAJOR_CONFLICT: Smarty has stronger DPV result"
+  }
+]

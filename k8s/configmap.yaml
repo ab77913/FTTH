@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ftth-config
+  namespace: ftth
+  labels:
+    app.kubernetes.io/name: ftth
+data:
+  FTTH_ENV: production
+  FTTH_DEV_RELOAD: "0"
+  FTTH_LOG_JSON: "1"
+  FTTH_HSTS: "1"
+  FTTH_CORS_ORIGINS: https://example.com
+  FTTH_REQUIRE_REDIS: "1"
+  FTTH_REQUIRE_RABBITMQ: "1"
+  FTTH_MAX_UPLOAD_BYTES: "104857600"
+  FTTH_MAX_ZIP_ENTRIES: "500"
+  REDIS_URL: redis://ftth-redis:6379/0
+  CELERY_BROKER_URL: redis://ftth-redis:6379/1
+  CELERY_RESULT_BACKEND: redis://ftth-redis:6379/2
+  LRU_CACHE_MAX_SIZE: "10000"
+  LRU_CACHE_TTL: "2592000"
+  POSTGIS_ENABLED: "false"
+  RES_COM_ADDRESSING_ENABLED: "true"
+  OLLAMA_HOST: http://ollama:11434
+  OLLAMA_VISION_MODEL: qwen2.5vl:latest
+

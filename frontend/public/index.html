@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f3f6fb" media="(prefers-color-scheme: light)" />
+  <title>Meridian - FTTH Data Ingestion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="/assets/api/theme.js"></script>
+  <link rel="stylesheet" href="/assets/styles/app.css" />
+  <link rel="stylesheet" href="/assets/styles/map.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/assets/lib/gmaps-loader.js"></script>
+  <script src="/assets/lib/map-tools.js"></script>
+  <script src="https://unpkg.com/three@0.165.0/build/three.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Sora', 'Segoe UI', 'sans-serif'] },
+          colors: { dark: { 900: '#0f1117', 800: '#1a1d28', 700: '#252832', 600: '#2f3340' } }
+        }
+      }
+    };
+  </script>
+</head>
+<body class="bg-[var(--app-bg)] text-[var(--app-text)] h-full">
+  <div id="root" class="h-full"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+  <!-- Plain JS (API layer) -->
+  <script src="/assets/api/http-client.js"></script>
+  <script src="/assets/api/auth.js"></script>
+  <script src="/assets/config/pipeline.js"></script>
+  <script src="/assets/api/data-api.js"></script>
+
+  <!-- Babel JSX (dependency order) -->
+  <script src="/assets/components/ui.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/ui-system.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/app/theme-context.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/app/globals.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/agent-progress-panel.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/street-view-panel.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/map-layers-panel.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/map-search-panel.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/map-selected-panel.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/upload-modal.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/records-table.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/flow-builder-modal.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/app-settings-modal.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/components/layout.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/pages/projects-page.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/pages/project-detail-page.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/pages/map-page.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/pages/login-page.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/pages/ollama-chat-page.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/app/app.jsx" type="text/babel" data-presets="env,react"></script>
+  <script src="/assets/app/bootstrap.jsx" type="text/babel" data-presets="env,react"></script>
+</body>
+</html>

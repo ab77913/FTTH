@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ftth-worker
+  namespace: ftth
+  labels:
+    app.kubernetes.io/name: ftth
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ftth
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ftth
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/your-org/your-repo/ftth-api:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - celery_worker.py
+          envFrom:
+            - configMapRef:
+                name: ftth-config
+            - secretRef:
+                name: ftth-secrets
+          volumeMounts:
+            - name: worker-data
+              mountPath: /app/data
+            - name: worker-data
+              mountPath: /app/uploads
+              subPath: uploads
+            - name: worker-data
+              mountPath: /app/logs
+              subPath: logs
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      volumes:
+        - name: worker-data
+          persistentVolumeClaim:
+            claimName: ftth-api-data

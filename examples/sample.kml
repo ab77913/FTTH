@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Sample FTTH Addresses</name>
+    <Placemark>
+      <name>1603 LAFAYETTE ST</name>
+      <ExtendedData>
+        <Data name="Address ID"><value>A1098636881</value></Data>
+        <Data name="Terminal ID"><value>T-1</value></Data>
+        <Data name="Node"><value>6BA8</value></Data>
+      </ExtendedData>
+      <Point><coordinates>-84.241345,32.086591,0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>706 KINGS WAY</name>
+      <ExtendedData>
+        <Data name="Address ID"><value>A1098631951</value></Data>
+        <Data name="Terminal ID"><value>T-1</value></Data>
+        <Data name="Node"><value>6BA8</value></Data>
+      </ExtendedData>
+      <Point><coordinates>-84.242501,32.088068,0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>

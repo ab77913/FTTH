@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Test Pipeline KML</name>
+    <Folder>
+      <name>Households</name>
+      <Placemark>
+        <name>100 Main St</name>
+        <description><![CDATA[Address: 100 Main St<br>City: Lexington<br>State: SC<br>ZIP: 29072]]></description>
+        <Point>
+          <coordinates>-81.2380,33.9812,0</coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>212 Wild Spring Ct</name>
+        <description><![CDATA[Address: 212 Wild Spring Ct<br>City: Lexington<br>State: SC<br>ZIP: 29072]]></description>
+        <Point>
+          <coordinates>-81.2350,33.9830,0</coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Coord Only Point</name>
+        <description><![CDATA[Coordinates only — no address]]></description>
+        <Point>
+          <coordinates>-81.2420,33.9750,0</coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

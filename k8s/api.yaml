@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ftth-api-data
+  namespace: ftth
+  labels:
+    app.kubernetes.io/name: ftth
+    app.kubernetes.io/component: api
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ftth-api
+  namespace: ftth
+  labels:
+    app.kubernetes.io/name: ftth
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ftth
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ftth
+        app.kubernetes.io/component: api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/your-org/your-repo/ftth-api:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: ftth-config
+            - secretRef:
+                name: ftth-secrets
+          ports:
+            - name: http
+              containerPort: 8000
+          volumeMounts:
+            - name: api-data
+              mountPath: /app/data
+            - name: api-data
+              mountPath: /app/uploads
+              subPath: uploads
+            - name: api-data
+              mountPath: /app/logs
+              subPath: logs
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+      volumes:
+        - name: api-data
+          persistentVolumeClaim:
+            claimName: ftth-api-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ftth-api
+  namespace: ftth
+  labels:
+    app.kubernetes.io/name: ftth
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ftth
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

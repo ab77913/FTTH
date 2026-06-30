@@ -1,0 +1,112 @@
+services:
+  # Standard PostgreSQL (PostGIS off). To re-enable PostGIS:
+  #   - image: postgis/postgis:16-3.4
+  #   - mount ./scripts/init_postgis.sql instead of init_postgres.sql
+  #   - set POSTGIS_ENABLED=true in .env
+  postgres:
+    image: postgres:16
+    container_name: ftth-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ftth
+      POSTGRES_PASSWORD: ftth
+      POSTGRES_DB: ftth
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    ports:
+      - "0.0.0.0:5432:5432"
+    volumes:
+      - ftth_postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init_postgres.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ftth -d ftth"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ftth-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ftth_redis_data:/data
+    # volatile-lru: evict keys with TTL using LRU policy when maxmemory is reached.
+    # maxmemory-samples 10: sample 10 candidates per eviction (higher = more accurate LRU).
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --maxmemory 512mb
+      --maxmemory-policy volatile-lru
+      --maxmemory-samples 10
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: ftth-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ftth
+      RABBITMQ_DEFAULT_PASS: ftth
+      RABBITMQ_DEFAULT_VHOST: ftth
+    ports:
+      - "127.0.0.1:5672:5672"     # AMQP protocol
+      - "127.0.0.1:15672:15672"   # Management UI (http://localhost:15672)
+    volumes:
+      - ftth_rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ftth-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@ftth.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      SCRIPT_NAME: /pgadmin
+    volumes:
+      - ftth_pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  flower:
+    image: mher/flower:2.0
+    container_name: ftth-flower
+    restart: unless-stopped
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      FLOWER_PORT: 5555
+    ports:
+      - "127.0.0.1:5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    container_name: ftth-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - pgadmin
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  ftth_postgres_data:
+  ftth_pgadmin_data:
+  ftth_redis_data:
+  ftth_rabbitmq_data:

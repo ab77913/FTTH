@@ -1,0 +1,47 @@
+2026-05-20 11:50:03 | INFO     | BuildingDataAgent initialising from config/settings.example.yaml
+2026-05-20 11:50:03 | INFO     | Bootstrapping from sample footprints: data/sample/sample_footprints.geojson
+2026-05-20 11:50:03 | INFO     | Loading MS footprints from data/sample/sample_footprints.geojson
+2026-05-20 11:50:04 | INFO     | Loaded 25 MS footprints
+2026-05-20 11:50:04 | INFO     | STRtree index built with 25 footprints
+2026-05-20 12:25:12 | INFO     | BuildingDataAgent initialising from config/settings.example.yaml
+2026-05-20 12:25:12 | INFO     | Bootstrapping from ms_dir/google_dir
+2026-05-20 12:25:12 | INFO     | Loading MS footprints from data\real\nd\NorthDakota.geojson
+2026-05-20 12:25:27 | INFO     | Loaded 568213 MS footprints
+2026-05-20 12:25:27 | INFO     | Total footprints after dedup: 568213
+2026-05-20 12:25:28 | INFO     | STRtree index built with 568213 footprints
+2026-05-20 12:26:56 | INFO     | BuildingDataAgent initialising from config/settings.example.yaml
+2026-05-20 12:26:56 | INFO     | Bootstrapping from ms_dir/google_dir
+2026-05-20 12:26:56 | INFO     | Loading MS footprints from data\real\nd\NorthDakota.geojson
+2026-05-20 12:27:11 | INFO     | Loaded 568213 MS footprints
+2026-05-20 12:27:11 | INFO     | Total footprints after dedup: 568213
+2026-05-20 12:27:12 | INFO     | STRtree index built with 568213 footprints
+2026-05-20 12:27:42 | INFO     | BuildingDataAgent initialising from config/settings.example.yaml
+2026-05-20 12:27:42 | INFO     | Bootstrapping from ms_dir/google_dir
+2026-05-20 12:27:42 | INFO     | Loading MS footprints from data\real\nd\NorthDakota.geojson
+2026-05-20 12:27:58 | INFO     | Loaded 568213 MS footprints
+2026-05-20 12:27:58 | INFO     | Total footprints after dedup: 568213
+2026-05-20 12:27:59 | INFO     | STRtree index built with 568213 footprints
+2026-05-20 13:46:04 | INFO     | BuildingDataAgent initialising from config/settings.example.yaml
+2026-05-20 13:46:04 | INFO     | Bootstrapping from ms_dir/google_dir
+2026-05-20 13:46:04 | INFO     | Loading MS footprints from data\real\nd\NorthDakota.geojson
+2026-05-20 13:46:33 | INFO     | Loaded 568213 MS footprints
+2026-05-20 13:46:33 | INFO     | Total footprints after dedup: 568213
+2026-05-20 13:46:35 | INFO     | STRtree index built with 568213 footprints
+2026-05-20 13:48:17 | INFO     | BuildingDataAgent initialising from config/settings.example.yaml
+2026-05-20 13:48:17 | INFO     | Bootstrapping from ms_dir/google_dir
+2026-05-20 13:48:17 | INFO     | Loading MS footprints from data\real\nd\NorthDakota.geojson
+2026-05-20 13:48:28 | INFO     | Loaded 568213 MS footprints
+2026-05-20 13:48:28 | INFO     | Total footprints after dedup: 568213
+2026-05-20 13:48:28 | INFO     | STRtree index built with 568213 footprints
+2026-05-21 09:32:35 | INFO     | BuildingDataAgent initialising from config/settings.example.yaml
+2026-05-21 09:32:35 | INFO     | Bootstrapping from ms_dir/google_dir
+2026-05-21 09:32:35 | INFO     | Loading MS footprints from data\real\nd\NorthDakota.geojson
+2026-05-21 09:32:51 | INFO     | Loaded 568213 MS footprints
+2026-05-21 09:32:51 | INFO     | Total footprints after dedup: 568213
+2026-05-21 09:32:53 | INFO     | STRtree index built with 568213 footprints
+2026-05-21 10:51:06 | INFO     | BuildingDataAgent initialising from config/settings.example.yaml
+2026-05-21 10:51:06 | INFO     | Bootstrapping from ms_dir/google_dir
+2026-05-21 10:51:06 | INFO     | Loading MS footprints from data\real\nd\NorthDakota.geojson
+2026-05-21 10:51:38 | INFO     | Loaded 568213 MS footprints
+2026-05-21 10:51:38 | INFO     | Total footprints after dedup: 568213
+2026-05-21 10:51:41 | INFO     | STRtree index built with 568213 footprints

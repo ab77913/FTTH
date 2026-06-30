@@ -1,0 +1,4 @@
+address,city,state,zip,latitude,longitude
+"100 Main St","Lexington","SC","29072","33.9812","-81.2380"
+"212 Wild Spring Ct","Lexington","SC","29072",,
+"","","","","33.9750","-81.2420"
