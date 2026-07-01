@@ -1,48 +1,38 @@
 # CI/CD Pipeline
 
-This repository uses GitHub Actions for pull-request validation, security checks, Docker image publishing, and optional production deployment.
-
-## Branch Model
-
-- `main` is the production branch.
-- `develop` is the shared integration branch for active development.
-- Developers create `feature/*`, `fix/*`, `chore/*`, or `docs/*` branches from `develop`.
-- Pull requests should target `develop` first.
-- Release pull requests promote `develop` into `main`.
+This repository uses GitHub Actions for quality gates, tests, security scanning, Docker image publishing, and optional production deployment.
 
 ## Workflows
 
-- `.github/workflows/ci.yml` - quality gates, tests, security audit, Docker build/publish, optional deploy.
-- `.github/workflows/codeql.yml` - CodeQL security analysis on pushes, PRs, weekly schedule, and manual runs.
+- `.github/workflows/ci.yml` - main CI/CD pipeline.
+- `.github/workflows/codeql.yml` - scheduled and pull-request CodeQL security analysis.
 - `.github/dependabot.yml` - weekly dependency updates for Python and GitHub Actions.
 
 ## Main Pipeline Stages
 
-1. Quality gates
-   - Install Python dependencies on the default CI Python version.
+1. **Quality gates**
+   - Install Python dependencies on the default minimum supported Python version (`3.10`).
    - Run Ruff lint.
    - Compile Python source without writing `.pyc` files.
    - Run `scripts/production_readiness_check.py`.
    - Run static frontend and production readiness tests.
 
-2. API and pipeline tests
-   - Starts PostGIS/PostgreSQL, Redis, and RabbitMQ services.
-   - Runs API contract, auth, health, security, map API, and full pytest checks.
-   - Tests supported Python versions `3.10`, `3.11`, and `3.12`.
+2. **API and pipeline tests**
+   - Starts PostgreSQL, Redis, and RabbitMQ services.
+   - Runs API contract, auth, health, security, map API, and the full pytest suite on Python `3.10`, `3.11`, `3.12`, and `3.13`.
    - Uploads debug artifacts on failure.
 
-3. Security audit
+3. **Security audit**
    - Runs `pip-audit` against `requirements.txt`.
    - Runs Gitleaks secret scanning.
 
-4. Docker build and publish
-   - Builds the production Docker image for every PR and branch validation.
+4. **Docker build and publish**
+   - Builds the production Docker image.
    - Runs an import smoke test inside the image.
-   - Publishes to GitHub Container Registry only from `main` and `v*` tags.
+   - Publishes to GitHub Container Registry on `main` and `v*` tags.
 
-5. Optional production deployment
-   - Runs only from `main`.
-   - Requires manual `workflow_dispatch` with `deploy=true`, or repository/environment variable `AUTO_DEPLOY_PRODUCTION=true`.
+5. **Optional production deployment**
+   - Runs only from `main` when manually requested with `workflow_dispatch.deploy=true` or when `AUTO_DEPLOY_PRODUCTION=true` is set as a repository/environment variable.
    - Uses SSH to run `docker compose pull && docker compose up -d` on the target server.
 
 ## Required GitHub Secrets for Deploy
@@ -57,28 +47,6 @@ Configure these in the `production` GitHub Environment or repository secrets:
 
 - `PROD_APP_DIR` - directory on the server containing `docker-compose.yml`.
 - `AUTO_DEPLOY_PRODUCTION` - optional. Set to `true` to deploy automatically on `main` after successful image build.
-
-## Recommended Branch Protection
-
-Configure branch protection in GitHub for `main` and `develop`:
-
-- Require pull request before merging.
-- Require at least one approval.
-- Require status checks to pass.
-- Require branches to be up to date before merging.
-- Block force pushes.
-- Restrict direct pushes to `main`.
-
-Suggested required status checks:
-
-- `Quality gates`
-- `API and pipeline tests (Python 3.10)`
-- `API and pipeline tests (Python 3.11)`
-- `API and pipeline tests (Python 3.12)`
-- `Security audit`
-- `Docker build and publish`
-- `Analyze (python)`
-- `Analyze (javascript-typescript)`
 
 ## Container Registry
 
@@ -108,4 +76,5 @@ docker build -t ftth-api:local .
 
 ## Secret Handling
 
-CI uses placeholder values only. Store real production values in GitHub Secrets, GitHub Environments, or server-side `.env` files. Do not commit real API keys, passwords, tokens, or private customer data.
+The Docker build context excludes `.env` through `.dockerignore`. CI also runs Gitleaks. If you intentionally keep `.env` in a private repository, expect secret scanning to fail until you configure an explicit, reviewed allowlist. The safer practice is to store real values in GitHub Secrets or server-side `.env` files only.
+

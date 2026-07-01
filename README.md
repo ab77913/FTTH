@@ -1,8 +1,6 @@
 # FTTH Production Platform
 
-[![CI/CD](https://github.com/ab77913/FTTH/actions/workflows/ci.yml/badge.svg)](https://github.com/ab77913/FTTH/actions/workflows/ci.yml)
-
-Meridian FTTH address ingestion and 8-agent validation pipeline (Agents 0-7).
+Meridian FTTH address ingestion and 8-agent validation pipeline (Agents 0â€“7).
 
 ## Quick start (local Windows)
 
@@ -16,69 +14,60 @@ py -3.10 -m venv .venv
 start_app.bat
 ```
 
-`start_app.bat` loads API keys from `.env` only. Copy `.env.example` first.
+`start_app.bat` loads API keys from `.env` only (no secrets in the batch file). Copy `.env.example` first.
 
-Open http://localhost. Default users: `ftth_team` / `Meridian@2026`.
+Open http://localhost â€” default users: `ftth_team` / `Meridian@2026`
 
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for service map, folder layout, and edit guide.
-
-## Team Workflow
-
-- `main` is the production branch.
-- `develop` is the shared development branch.
-- Create feature branches from `develop` and open pull requests back into `develop`.
-- Release changes by opening a pull request from `develop` into `main`.
-
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) and [docs/CI_CD.md](docs/CI_CD.md).
 
 ## Development
 
 | Command | Purpose |
 |---------|---------|
 | `start_app.bat` | Full stack: API + Celery + Nginx + Docker Redis/RabbitMQ |
-| `.venv\Scripts\python.exe api_server.py` | API only, with hot reload when `FTTH_DEV_RELOAD=1` |
+| `.venv\Scripts\python.exe api_server.py` | API only (hot reload when `FTTH_DEV_RELOAD=1`) |
 | `.venv\Scripts\python.exe -m pytest tests/ -q` | Run tests |
 | `.venv\Scripts\python.exe -m ruff check backend tests api_server.py` | Lint |
 
-## Project Layout
+## Project layout
 
 | Folder | Purpose |
 |--------|---------|
-| `frontend/` | React UI. See [frontend/README.md](frontend/README.md) |
-| `backend/` | FastAPI + pipeline. See [backend/README.md](backend/README.md) |
-| `api_server.py` | Root entry shim that imports `backend.api.server` |
-| `backend/celery_worker.py` | Celery worker, or root `celery_worker.py` shim |
+| `frontend/` | React UI â€” see [frontend/README.md](frontend/README.md) |
+| `backend/` | FastAPI + pipeline â€” see [backend/README.md](backend/README.md) |
+| `api_server.py` | Root entry shim (imports `backend.api.server`) |
+| `backend/celery_worker.py` | Celery worker (or root `celery_worker.py` shim) |
 | `tests/` | pytest suite |
-| `docs/` | Architecture, deployment, runbook, CI/CD docs |
-| `scripts/` | Ops utilities such as `emit_env_bat.py` and Celery dev watcher |
+| `docs/` | Architecture, deployment, runbook |
+| `scripts/` | Ops utilities (`emit_env_bat.py`, Celery dev watcher) |
 | `scripts/dev/` | Ad-hoc debugging scripts |
 | `tools/ollama/` | Optional Ollama chat server |
 
-## Upload Formats
+## Upload formats
 
-- CSV: address columns auto-detected, such as `Address` or `Street Address`.
-- KMZ/KML: point placemarks with street addresses extracted.
-- CSV + KMZ together: upload both in one request; addresses merge with geometry.
+- **CSV** â€” address columns auto-detected (`Address`, `Street Address`, etc.)
+- **KMZ/KML** â€” point placemarks with street addresses extracted
+- **CSV + KMZ together** â€” upload both in one request; addresses merge with geometry
 
-## Health Checks
+## Health checks
 
 - Liveness: `GET /api/health`
-- Readiness: `GET /api/ready`, including PostgreSQL check
+- Readiness: `GET /api/ready` (includes PostgreSQL check)
 
 ## Documentation
 
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) - production deployment
-- [docs/RUNBOOK.md](docs/RUNBOOK.md) - operations troubleshooting
-- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) - development workflow
-- [docs/CI_CD.md](docs/CI_CD.md) - GitHub Actions and release flow
-- [docs/SECURITY.md](docs/SECURITY.md) - security notes
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) â€” production deployment
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) â€” operations troubleshooting
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) â€” development workflow
+- [docs/SECURITY.md](docs/SECURITY.md) â€” security notes
 
-## Frontend Structure
+## Frontend structure
 
 See [frontend/README.md](frontend/README.md). Key paths:
 
-- `frontend/public/index.html` - HTML shell that loads `/assets/...` scripts
-- `frontend/src/api/auth.js` - auth and API client
-- `frontend/src/pages/` - screen components for projects, map, login, and related views
+- `frontend/public/index.html` â€” HTML shell (loads `/assets/...` scripts)
+- `frontend/src/api/auth.js` â€” auth + API client
+- `frontend/src/pages/` â€” screen components (projects, map, login, â€¦)
+

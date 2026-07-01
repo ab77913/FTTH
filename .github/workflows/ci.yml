@@ -23,9 +23,9 @@ permissions:
   packages: write
   security-events: write
 
-# CI uses safe placeholders only. Real production values belong in GitHub Secrets/Environments.
+# Safe CI defaults. Production secrets must be supplied through GitHub Environments/Secrets.
 env:
-  PYTHON_DEFAULT_VERSION: "3.11"
+  PYTHON_DEFAULT_VERSION: "3.10"
   IMAGE_NAME: ghcr.io/${{ github.repository }}/ftth-api
   DATABASE_URL: postgresql+psycopg2://ftth:ftth@127.0.0.1:5432/ftth
   REDIS_URL: redis://127.0.0.1:6379/0
@@ -37,7 +37,6 @@ env:
   FTTH_SSL_VERIFY: "0"
   FTTH_CORS_ORIGINS: http://localhost,http://127.0.0.1
   FTTH_ALLOW_LOCAL_DATABASE: "1"
-  PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
   quality:
@@ -67,6 +66,8 @@ jobs:
           scripts/emit_env_bat.py scripts/celery_dev_worker.py scripts/production_readiness_check.py
 
       - name: Syntax compile without writing pyc
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -83,7 +84,7 @@ jobs:
       - name: Production readiness audit
         run: python scripts/production_readiness_check.py
 
-      - name: Static/frontend contract tests
+      - name: Frontend static contract tests
         run: python -m pytest tests/test_static_frontend.py tests/test_production_readiness.py -q
 
   test:
@@ -94,10 +95,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     services:
       postgres:
-        image: postgis/postgis:16-3.4
+        image: postgres:16
         env:
           POSTGRES_USER: ftth
           POSTGRES_PASSWORD: ftth
@@ -163,11 +164,11 @@ jobs:
       - name: Full test suite
         run: python -m pytest tests/ -q --tb=short
 
-      - name: Upload pytest debug artifacts on failure
+      - name: Upload pytest cache/logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-debug-${{ matrix.python-version }}-${{ github.run_id }}
+          name: pytest-debug-${{ github.run_id }}
           path: |
             .pytest_cache
             logs
@@ -201,13 +202,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
-    name: Docker build and publish
+    name: Docker build
     runs-on: ubuntu-latest
     needs: [quality, test]
     timeout-minutes: 30
     outputs:
       image: ${{ steps.meta.outputs.tags }}
-      digest: ${{ steps.publish.outputs.digest || steps.build.outputs.digest }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -226,7 +227,7 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build image for PR/branch validation
+      - name: Build image
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -239,7 +240,8 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Image smoke test
-        run: docker run --rm ftth-api:ci python -c "import api_server; print('api_server import ok')"
+        run: |
+          docker run --rm ftth-api:ci python -c "import api_server; print('api_server import ok')"
 
       - name: Login to GHCR
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
@@ -250,7 +252,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish image
-        id: publish
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: docker/build-push-action@v6
         with:
@@ -284,6 +285,7 @@ jobs:
           PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
           PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
           PROD_APP_DIR: ${{ vars.PROD_APP_DIR }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}:latest
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$PROD_SSH_KEY" > ~/.ssh/ftth_deploy_key
