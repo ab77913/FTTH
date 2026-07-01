@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from data_ingestion.utils.rule_classification import (
     address_found_from_raw_metadata,
+    is_interpolated_forward_reverse_conflict,
+    is_missing_address_record,
     is_sticky_duplicate,
     rule_status_from_raw_metadata,
 )
@@ -77,3 +79,43 @@ def test_sticky_duplicate_overrides_later_match_metadata() -> None:
     assert status == "duplicate"
     assert color == "white"
     assert "duplicate" in reason.lower()
+
+
+def test_missing_address_comment_is_excluded_not_invalid() -> None:
+    meta = {"COMMENTS": "ADDRESS DATA NOT GIVEN IN CSV"}
+    assert is_missing_address_record(meta) is True
+
+    status, color, reason = rule_status_from_raw_metadata(meta)
+    assert status == "excluded"
+    assert color == ""
+    assert "not given" in reason.lower()
+
+
+def test_missing_tabular_raw_address_is_excluded() -> None:
+    meta = {"file_role": "tabular"}
+    status, color, reason = rule_status_from_raw_metadata(meta)
+    assert status == "invalid"
+    assert color == "red"
+
+    assert is_missing_address_record(meta, raw_address=None) is True
+    assert is_missing_address_record(meta, raw_address="") is True
+
+
+def test_interpolated_forward_reverse_conflict_is_invalid_not_found() -> None:
+    meta = {
+        "address_validation": {
+            "match_status": "MATCH",
+            "selected_direction": "forward",
+            "location_type": "RANGE_INTERPOLATED",
+            "reverse_address_match_percent": 40,
+            "forward_address_match_percent": 100,
+            "notes": "Reverse at pin returned house number 106, so the uploaded address was retained.",
+        }
+    }
+
+    assert is_interpolated_forward_reverse_conflict(meta) is True
+    assert address_found_from_raw_metadata(meta) is False
+    status, color, reason = rule_status_from_raw_metadata(meta)
+    assert status == "invalid"
+    assert color == "red"
+    assert "range-interpolated" in reason

@@ -25,7 +25,12 @@ from collections import OrderedDict
 import pytest
 
 # ── Agent 2 imports ───────────────────────────────────────────────────────────
-from data_ingestion.agents.agent2_geocoding import _geocode
+from data_ingestion.agents.agent2_geocoding import (
+    _fm_road_query_aliases,
+    _geocode,
+    _geocode_query_aliases,
+    _geocode_with_fallback,
+)
 
 # ── Agent 3 imports ───────────────────────────────────────────────────────────
 from data_ingestion.agents.agent3_parcel import _classify_land_use, _call_census
@@ -41,6 +46,7 @@ from data_ingestion.utils.agent1_input import (
     resolve_agent1_input,
 )
 from data_ingestion.agents.agent1_address_validation import (
+    _apply_coord_mismatch_gate,
     _apply_quality_gates,
     _distance_m,
     _first_house_number,
@@ -350,6 +356,23 @@ class TestAgent1QualityGates:
         assert score == 35
         assert "coordinates available" in reason
 
+    def test_coord_address_mismatch_blocks_agent1_auto_accept(self):
+        addr = SimpleNamespace(
+            coord_address_match_status="ADDRESS_MISMATCH",
+            raw_metadata={},
+        )
+
+        status, score, reason = _apply_coord_mismatch_gate(
+            status="AUTO_ACCEPT",
+            score=100,
+            exc_reason=None,
+            addr=addr,
+        )
+
+        assert status == "REJECT"
+        assert score == 30
+        assert "ADDRESS_MISMATCH" in reason
+
 
 def _make_geocode_response(status="OK", lat=40.7128, lon=-74.0060,
                            location_type="ROOFTOP", formatted="123 Main St, NY"):
@@ -367,6 +390,62 @@ def _make_geocode_response(status="OK", lat=40.7128, lon=-74.0060,
 
 
 class TestAgent2Geocoding:
+    def test_fm_road_query_aliases_normalizes_rural_road_names(self):
+        assert _fm_road_query_aliases("404 E FM ROAD 11, IMPERIAL, TX, 79743") == [
+            "404 E FM 11, IMPERIAL, TX, 79743"
+        ]
+        assert _fm_road_query_aliases("404 E FARM TO MARKET ROAD 11, IMPERIAL, TX, 79743") == [
+            "404 E FM 11, IMPERIAL, TX, 79743"
+        ]
+
+    def test_geocode_query_aliases_adds_imperial_tx_provider_spellings(self):
+        assert "215 S COOLEDGE ST, IMPERIAL, TX, 79743" in _geocode_query_aliases(
+            "215 S COOLIDGE ST, IMPERIAL, TX, 79743"
+        )
+        assert "318 E FM 11, IMPERIAL, TX, 79743" in _geocode_query_aliases(
+            "318 E STATE HIGHWAY 11, IMPERIAL, TX, 79743"
+        )
+        assert _geocode_query_aliases("215 S COOLIDGE ST, AUSTIN, TX, 78701") == []
+
+    def test_geocode_with_fallback_retries_accepted_query_alias(self):
+        rejected = {
+            "ok": True,
+            "source": "GOOGLE",
+            "address_accepted": False,
+            "address_match_percent": 40,
+            "confidence": 0,
+        }
+        accepted = {
+            "ok": True,
+            "source": "GOOGLE",
+            "address_accepted": True,
+            "address_match_percent": 100,
+            "confidence": 95,
+            "latitude": 31.26,
+            "longitude": -102.69,
+        }
+
+        with patch("data_ingestion.agents.agent2_geocoding._get_api_key", return_value="key"):
+            with patch("data_ingestion.agents.agent2_geocoding._forward_geocode_google") as mock_forward:
+                with patch(
+                    "data_ingestion.agents.agent2_geocoding._finalize_geocode_result",
+                    side_effect=[rejected, accepted],
+                ):
+                    result, steps, executed = _geocode_with_fallback(
+                        "404 E FM ROAD 11, IMPERIAL, TX, 79743",
+                        geocode_options={
+                            "google_geocoding": True,
+                            "osm_geocoding": False,
+                            "street_interpolation": False,
+                        },
+                    )
+
+        assert result is accepted
+        assert result["query_alias"] == "404 E FM 11, IMPERIAL, TX, 79743"
+        assert executed["geocoding"] is accepted
+        assert any("accepted query alias" in step for step in steps)
+        assert mock_forward.call_args_list[1].args[0] == "404 E FM 11, IMPERIAL, TX, 79743"
+
     def test_geocode_success_returns_dict(self):
         mock_resp = MagicMock()
         mock_resp.read.return_value = _make_geocode_response()
@@ -2299,6 +2378,228 @@ class TestReverseForwardMatchSelection:
         )
         assert winner is reverse
         assert direction == "reverse"
+
+
+class TestAddressCoordinateValidation:
+    def test_forward_exact_near_pin_wins_over_reverse_pin_house_number_conflict(self):
+        from data_ingestion.agents.reverse_geocoder import _validate_address_coords
+
+        addr = SimpleNamespace(
+            id=102,
+            raw_address="102 IMPERIAL ST",
+            source_raw_address=None,
+            city="IMPERIAL",
+            state="TX",
+            zip_code="79743",
+            latitude=31.274467,
+            longitude=-102.692332,
+            source_latitude=None,
+            source_longitude=None,
+            validated_raw_address=None,
+            validated_street_line=None,
+            validated_postcode=None,
+            validated_city_state=None,
+            validated_country_code=None,
+            validated_latitude=None,
+            validated_longitude=None,
+            coord_address_match_status=None,
+            coord_address_distance_m=None,
+            coord_address_validation_notes=None,
+            reverse_geocode_confidence_score=None,
+            raw_metadata={},
+        )
+        reverse_at_pin = {
+            "source": "google",
+            "display_name": "180, Imperial Street, Imperial, Pecos County, Texas, 79743, United States",
+            "house_number": "180",
+            "road": "Imperial Street",
+            "city": "Imperial",
+            "state": "TX",
+            "postcode": "79743",
+            "country_code": "us",
+            "location_type": "ROOFTOP",
+            "latitude": 31.2744954,
+            "longitude": -102.6923115,
+            "address_types": ["street_address"],
+        }
+        forward_for_input = {
+            "source": "GOOGLE",
+            "display_name": "102 Imperial Street, Imperial, TX 79743, USA",
+            "formatted_address": "102 Imperial Street, Imperial, TX 79743, USA",
+            "house_number": "102",
+            "road": "Imperial Street",
+            "city": "Imperial",
+            "state": "TX",
+            "postcode": "79743",
+            "country_code": "us",
+            "location_type": "ROOFTOP",
+            "latitude": 31.2741488,
+            "longitude": -102.6918275,
+            "address_types": ["street_address"],
+        }
+
+        with patch("data_ingestion.agents.reverse_geocoder._google_api_key", return_value="key"):
+            with patch("data_ingestion.agents.reverse_geocoder._call_google_forward", return_value=forward_for_input):
+                with patch("data_ingestion.agents.reverse_geocoder.flag_modified"):
+                    result = _validate_address_coords(
+                        addr,
+                        reverse_geo=reverse_at_pin,
+                        allow_reverse_fallback=False,
+                    )
+
+        assert result["status"] == "MATCH"
+        assert addr.coord_address_match_status == "MATCH"
+        assert addr.validated_raw_address == "102 Imperial Street, Imperial, TX 79743, USA"
+        assert addr.raw_metadata["address_validation"]["forward_address_match_percent"] == 100
+        assert addr.raw_metadata["address_validation"]["address_match_percent"] == 100
+        assert addr.raw_metadata["address_validation"]["selected_direction"] == "forward"
+        assert "Reverse at pin returned house number 180" in addr.coord_address_validation_notes
+
+    def test_range_interpolated_forward_does_not_win_reverse_house_number_conflict(self):
+        from data_ingestion.agents.reverse_geocoder import _validate_address_coords
+
+        addr = SimpleNamespace(
+            id=504,
+            raw_address="504 TEACHERS RD",
+            source_raw_address=None,
+            city="IMPERIAL",
+            state="TX",
+            zip_code="79743",
+            latitude=31.277279,
+            longitude=-102.697174,
+            source_latitude=None,
+            source_longitude=None,
+            validated_raw_address=None,
+            validated_street_line=None,
+            validated_postcode=None,
+            validated_city_state=None,
+            validated_country_code=None,
+            validated_latitude=None,
+            validated_longitude=None,
+            coord_address_match_status=None,
+            coord_address_distance_m=None,
+            coord_address_validation_notes=None,
+            reverse_geocode_confidence_score=None,
+            raw_metadata={},
+        )
+        reverse_at_pin = {
+            "source": "google",
+            "display_name": "664 Teachers Rd, Imperial, TX 79743, USA",
+            "house_number": "664",
+            "road": "Teachers Road",
+            "city": "Imperial",
+            "state": "TX",
+            "postcode": "79743",
+            "country_code": "us",
+            "location_type": "ROOFTOP",
+            "latitude": 31.277279,
+            "longitude": -102.697174,
+            "address_types": ["street_address"],
+        }
+        forward_for_input = {
+            "source": "GOOGLE",
+            "display_name": "504 Teachers Rd, Imperial, TX 79743, USA",
+            "formatted_address": "504 Teachers Rd, Imperial, TX 79743, USA",
+            "house_number": "504",
+            "road": "Teachers Road",
+            "city": "Imperial",
+            "state": "TX",
+            "postcode": "79743",
+            "country_code": "us",
+            "location_type": "RANGE_INTERPOLATED",
+            "latitude": 31.2772521,
+            "longitude": -102.6962634,
+            "address_types": ["street_address"],
+        }
+
+        with patch("data_ingestion.agents.reverse_geocoder._google_api_key", return_value="key"):
+            with patch("data_ingestion.agents.reverse_geocoder._call_google_forward", return_value=forward_for_input):
+                with patch("data_ingestion.agents.reverse_geocoder.flag_modified"):
+                    result = _validate_address_coords(
+                        addr,
+                        reverse_geo=reverse_at_pin,
+                        allow_reverse_fallback=False,
+                    )
+
+        assert result["status"] == "ADDRESS_MISMATCH"
+        assert addr.coord_address_match_status == "ADDRESS_MISMATCH"
+        assert addr.validated_raw_address == "504 TEACHERS RD"
+        assert addr.raw_metadata["address_validation"]["location_type"] == "ROOFTOP"
+        assert addr.raw_metadata["address_validation"]["selected_direction"] == "source"
+        assert "664" in addr.coord_address_validation_notes
+
+    def test_forward_exact_far_from_pin_remains_address_mismatch(self):
+        from data_ingestion.agents.reverse_geocoder import _validate_address_coords
+
+        addr = SimpleNamespace(
+            id=201,
+            raw_address="201 N 1ST ST",
+            source_raw_address=None,
+            city="IMPERIAL",
+            state="TX",
+            zip_code="79743",
+            latitude=31.27386700000214,
+            longitude=-102.6905210000026,
+            source_latitude=None,
+            source_longitude=None,
+            validated_raw_address=None,
+            validated_street_line=None,
+            validated_postcode=None,
+            validated_city_state=None,
+            validated_country_code=None,
+            validated_latitude=None,
+            validated_longitude=None,
+            coord_address_match_status=None,
+            coord_address_distance_m=None,
+            coord_address_validation_notes=None,
+            reverse_geocode_confidence_score=None,
+            raw_metadata={},
+        )
+        reverse_at_pin = {
+            "source": "google",
+            "display_name": "208 1st St, Imperial, TX 79743, USA",
+            "house_number": "208",
+            "road": "1st Street",
+            "city": "Imperial",
+            "state": "TX",
+            "postcode": "79743",
+            "country_code": "us",
+            "location_type": "ROOFTOP",
+            "latitude": 31.27386700000214,
+            "longitude": -102.6905210000026,
+            "address_types": ["street_address"],
+        }
+        forward_for_input = {
+            "source": "GOOGLE",
+            "display_name": "201 N 1st St, Imperial, TX 79743, USA",
+            "formatted_address": "201 N 1st St, Imperial, TX 79743, USA",
+            "house_number": "201",
+            "road": "1st Street",
+            "city": "Imperial",
+            "state": "TX",
+            "postcode": "79743",
+            "country_code": "us",
+            "location_type": "ROOFTOP",
+            "latitude": 31.270818,
+            "longitude": -102.690521,
+            "address_types": ["street_address"],
+        }
+
+        with patch("data_ingestion.agents.reverse_geocoder._google_api_key", return_value="key"):
+            with patch("data_ingestion.agents.reverse_geocoder._call_google_forward", return_value=forward_for_input):
+                with patch("data_ingestion.agents.reverse_geocoder.flag_modified"):
+                    result = _validate_address_coords(
+                        addr,
+                        reverse_geo=reverse_at_pin,
+                        allow_reverse_fallback=False,
+                    )
+
+        assert result["status"] == "ADDRESS_MISMATCH"
+        assert addr.coord_address_match_status == "ADDRESS_MISMATCH"
+        assert addr.validated_raw_address == "201 N 1ST ST"
+        assert addr.raw_metadata["address_validation"]["forward_address_match_percent"] == 100
+        assert addr.raw_metadata["address_validation"]["selected_direction"] == "source"
+        assert "208" in addr.coord_address_validation_notes
 
 
 class TestReverseGeocodeConfidenceScoring:

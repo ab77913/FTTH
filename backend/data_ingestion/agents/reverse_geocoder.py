@@ -577,6 +577,9 @@ _MISMATCH_WARN_THRESHOLD_M = float(os.environ.get("FTTH_COORD_MISMATCH_WARN_M", 
 _ADDRESS_MATCH_REQUIRED = int(os.environ.get("FTTH_AGENT2_ADDRESS_MATCH_REQUIRED", "100"))
 _LOW_MATCH_CONFIDENCE_CAP = int(os.environ.get("FTTH_AGENT2_LOW_MATCH_CONFIDENCE", "35"))
 _CACHE_RESULT_MAX_DISTANCE_M = float(os.environ.get("FTTH_RGC_CACHE_MAX_DISTANCE_M", "2000"))
+_FORWARD_EXACT_PIN_TOLERANCE_M = float(
+    os.environ.get("FTTH_AGENT2_FORWARD_EXACT_PIN_TOLERANCE_M", str(_MATCH_THRESHOLD_M))
+)
 
 
 def _cached_geo_matches_query(geo: dict[str, Any] | None, lat: float, lon: float) -> bool:
@@ -1686,6 +1689,7 @@ def _validate_address_coords(
 
     upload_line = _resolve_upload_address(addr, meta)
     match_scores = {"reverse": 100, "forward": 100, "best": 100}
+    address_first_forward_match = False
     if upload_line:
         match_scores = _address_match_scores(
             upload_line,
@@ -1697,21 +1701,33 @@ def _validate_address_coords(
 
         raw_hn = _house_number_from_text(upload_line).upper()
         forced_match = False
+        reverse_hn = _geo_house_number(reverse_geo)
+        forward_hn = _geo_house_number(forward)
+        reverse_house_number_conflict = bool(raw_hn and reverse_hn and reverse_hn != raw_hn)
+        address_first_forward_match = (
+            bool(forward)
+            and distance_m is not None
+            and distance_m <= _FORWARD_EXACT_PIN_TOLERANCE_M
+            and match_scores["forward"] >= _ADDRESS_MATCH_REQUIRED
+            and _rooftop_full_match(forward, match_scores["forward"])
+            and (not raw_hn or forward_hn == raw_hn)
+        )
         if raw_hn:
             if forward:
-                fwd_hn = _geo_house_number(forward)
-                if fwd_hn == raw_hn:
+                if forward_hn == raw_hn:
                     match_scores["forward"] = 100
                     match_scores["best"] = max(match_scores["best"], 100)
                     forced_match = True
             if reverse_geo:
-                rev_hn = _geo_house_number(reverse_geo)
-                if rev_hn == raw_hn:
+                if reverse_hn == raw_hn:
                     match_scores["reverse"] = 100
                     match_scores["best"] = max(match_scores["best"], 100)
                     forced_match = True
 
-        if _reverse_precise_house_number_match(upload_line, reverse_geo, distance_m=distance_m):
+        if (
+            not reverse_house_number_conflict
+            and _reverse_precise_house_number_match(upload_line, reverse_geo, distance_m=distance_m)
+        ):
             match_scores["reverse"] = 100
             match_scores["best"] = max(match_scores["best"], 100)
             forced_match = True
@@ -1719,7 +1735,31 @@ def _validate_address_coords(
         if forced_match:
             status = "MATCH"
 
-        if match_scores["best"] < _ADDRESS_MATCH_REQUIRED:
+        if reverse_house_number_conflict and address_first_forward_match:
+            match_scores["forward"] = max(match_scores["forward"], _ADDRESS_MATCH_REQUIRED)
+            match_scores["best"] = max(match_scores["best"], match_scores["forward"])
+            status = "MATCH"
+            val_addr = forward.get("display_name") or forward.get("formatted_address") or upload_line
+            val_lat = float(forward["latitude"])
+            val_lon = float(forward["longitude"])
+            component_geo = forward
+            notes = (
+                f"Uploaded address forward-geocoded with {match_scores['forward']}% match "
+                f"within {distance_m:.1f}m of supplied coordinates "
+                f"(tolerance {_FORWARD_EXACT_PIN_TOLERANCE_M}m). "
+                f"Reverse at pin returned house number {reverse_hn}, so the uploaded address was retained."
+            )
+        elif reverse_house_number_conflict:
+            match_scores["best"] = min(match_scores["best"], match_scores["reverse"], 40)
+            status = "ADDRESS_MISMATCH"
+            val_addr = upload_line
+            val_lat, val_lon = src_lat, src_lon
+            component_geo = reverse_geo
+            notes = (
+                f"Uploaded address house number {raw_hn} does not match the address at the "
+                f"supplied coordinates ({reverse_hn}). Reverse at pin: {reverse_display or 'n/a'}"
+            )
+        elif match_scores["best"] < _ADDRESS_MATCH_REQUIRED:
             status = "ADDRESS_MISMATCH"
             val_addr = upload_line
             val_lat, val_lon = src_lat, src_lon
@@ -1805,6 +1845,12 @@ def _validate_address_coords(
         confidence_score=confidence_score,
         notes=notes,
     )
+    if status == "MISMATCH_WARN" and address_first_forward_match:
+        status = "MATCH"
+        notes = (
+            f"{notes} Uploaded address forward match is exact and within "
+            f"{_FORWARD_EXACT_PIN_TOLERANCE_M}m, so the uploaded address is accepted."
+        )
     if status == "MATCH":
         reverse_confidence = 100
         confidence_score = 100

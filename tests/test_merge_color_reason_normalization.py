@@ -73,3 +73,63 @@ def test_sticky_duplicate_wins_over_valid_rule_export_fields() -> None:
     assert rule["rule_status"] == "duplicate"
     assert rule["rule_color"] == "white"
     assert map_fields["map_color_hex"] == "#ffffff"
+
+
+def test_missing_address_exports_as_excluded_without_row_color() -> None:
+    meta = {
+        "COMMENTS": "ADDRESS DATA NOT GIVEN IN CSV",
+        "merge_status": "invalid",
+        "merge_color": "red",
+        "rule_status": "invalid",
+        "rule_color": "red",
+    }
+
+    merge = _normalized_merge_fields(meta)
+    rule = _rule_export_fields(meta)
+    map_fields = _rule_map_export_fields(rule)
+
+    assert merge["merge_status"] == "excluded"
+    assert merge["merge_color"] == ""
+    assert rule["rule_status"] == "excluded"
+    assert rule["rule_color"] == ""
+    assert map_fields["map_color_hex"] == ""
+    assert map_fields["map_color_label"] == "Address Data Not Given"
+
+
+def test_interpolated_forward_conflict_exports_as_invalid_red() -> None:
+    meta = {
+        "merge_status": "verified",
+        "merge_color": "green",
+        "rule_status": "valid",
+        "rule_color": "green",
+        "address_validation": {
+            "match_status": "MATCH",
+            "selected_direction": "forward",
+            "location_type": "RANGE_INTERPOLATED",
+            "reverse_address_match_percent": 27,
+            "forward_address_match_percent": 100,
+            "notes": "Reverse at pin returned house number 664, so the uploaded address was retained.",
+        },
+    }
+
+    merge = _normalized_merge_fields(meta)
+    rule = _rule_export_fields(meta)
+
+    assert merge["merge_status"] == "invalid"
+    assert merge["merge_color"] == "red"
+    assert rule["rule_status"] == "invalid"
+    assert rule["rule_color"] == "red"
+
+
+def test_invalid_exports_to_address_not_found_map_label() -> None:
+    meta = {"merge_status": "invalid", "merge_color": "red"}
+    merge = _normalized_merge_fields(meta)
+    rule = _rule_export_fields(meta)
+    map_fields = _rule_map_export_fields(rule)
+
+    assert merge["merge_status"] == "invalid"
+    assert merge["merge_color"] == "red"
+    assert rule["rule_status"] == "invalid"
+    assert rule["rule_color"] == "red"
+    assert map_fields["map_color_hex"] == "#C00000"
+    assert map_fields["map_color_label"] == "Address Not Found"

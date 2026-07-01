@@ -295,6 +295,34 @@ def _apply_quality_gates(*, status: str, score: int, chosen, comparison, addr: A
     return status, score, _join_reasons(exc_reason, reasons)
 
 
+def _coord_address_hard_mismatch(addr: Address) -> str:
+    meta = addr.raw_metadata if isinstance(addr.raw_metadata, dict) else {}
+    av = meta.get("address_validation") if isinstance(meta.get("address_validation"), dict) else {}
+    status = str(
+        getattr(addr, "coord_address_match_status", None)
+        or av.get("match_status")
+        or ""
+    ).strip().upper()
+    return status if status in {"ADDRESS_MISMATCH", "MISMATCH"} else ""
+
+
+def _apply_coord_mismatch_gate(
+    *,
+    status: str,
+    score: int,
+    exc_reason: str | None,
+    addr: Address,
+) -> tuple[str, int, str | None]:
+    mismatch_status = _coord_address_hard_mismatch(addr)
+    if not mismatch_status:
+        return status, score, exc_reason
+    reason = (
+        f"coordinate/address validation returned {mismatch_status}; "
+        "provider-standardized address was not accepted as final"
+    )
+    return "REJECT", min(score, 30), _join_reasons(exc_reason, [reason])
+
+
 def _mask_credential(value: str | None) -> str:
     if not value:
         return "(missing)"
@@ -822,6 +850,13 @@ def run_agent1_for_job(
                                 " → score=35 MANUAL_REVIEW",
                                 idx, total, addr.id, _raw_hn, _smarty_hn,
                             )
+
+                    status, score, exc_reason = _apply_coord_mismatch_gate(
+                        status=status,
+                        score=score,
+                        exc_reason=exc_reason,
+                        addr=addr,
+                    )
 
                     comparison_reason = (
                         f"{comparison.conflict_level}: {comparison.reason}"

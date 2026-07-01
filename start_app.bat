@@ -133,8 +133,7 @@ if exist "%PROJECT_DIR%\.env" (
 
 :: â”€â”€ Step 1: Stop existing services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 echo [1/7] Stopping any existing services...
-powershell -NoProfile -Command ^
-  "$project = (Resolve-Path '.').Path; Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*data_ingestion.worker.celery_app*' -and $_.CommandLine -like ('*' + $project + '*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Get-Process nginx -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 800"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%\scripts\stop_ftth_services.ps1" -ProjectDir "%PROJECT_DIR%"
 docker rm -f ftth-redis ftth-rabbitmq >nul 2>&1
 echo        Done.
 echo.
@@ -312,10 +311,8 @@ pause >nul
 :: â”€â”€ Shutdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 echo.
 echo Stopping services...
-powershell -NoProfile -Command ^
-  "Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Get-Process nginx -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"
 cd /d "%PROJECT_DIR%"
-docker compose stop redis rabbitmq
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%\scripts\stop_ftth_services.ps1" -ProjectDir "%PROJECT_DIR%" -StopDocker
 echo All services stopped. Goodbye!
 timeout /t 2 /nobreak >nul
 

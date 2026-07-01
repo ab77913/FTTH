@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import replace
 from typing import Any, Callable
 from uuid import UUID
@@ -57,40 +58,196 @@ from data_ingestion.database.models            import (
 )
 from data_ingestion.utils.ai_metadata import ai_metadata_dict
 from data_ingestion.utils.agent_logging import configure_agent_logger, log_payload
-from data_ingestion.utils.rule_classification import is_sticky_duplicate, is_uploaded_geospatial_input
+from data_ingestion.utils.rule_classification import (
+    INTERPOLATED_FORWARD_CONFLICT_REASON,
+    MISSING_ADDRESS_REASON,
+    is_interpolated_forward_reverse_conflict,
+    is_missing_address_record,
+    is_sticky_duplicate,
+    is_uploaded_geospatial_input,
+)
 from data_ingestion.utils.strings import normalize_address_key, normalize_duplicate_address_key
 from sqlalchemy.orm.attributes                 import flag_modified
 
 logger = logging.getLogger(__name__)
 
 _RULE_ENGINE_AGENT = "rule_engine"
+_LINEAR_EXACT_OVERRIDE_THRESHOLD_M = float(os.environ.get("FTTH_LINEAR_EXACT_OVERRIDE_THRESHOLD_M", "20"))
+_AGENT2_ADDRESS_FOUND_REASON = "Address found by exact geocoder match; supplied coordinates appear incorrect"
+_AGENT2_NOT_FOUND_REASON = "Address not found in Google Maps after exact and alias geocode attempts"
 
 
 def _rule_status_from_merge_status(status: str) -> str:
     status_key = str(status or "").strip().lower()
     if status_key == "verified":
         return "valid"
-    if status_key in {"invalid", "duplicate", "new"}:
+    if status_key in {"invalid", "duplicate", "new", "excluded"}:
         return status_key
     return "invalid"
+
+
+def _float_value(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_value(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _agent2_exact_address_found(data: dict[str, Any] | None) -> tuple[bool, str, int, float | None]:
+    """Return true when Agent 2 has strict, non-interpolated proof the submitted address exists."""
+    if not isinstance(data, dict):
+        return False, "", 0, None
+
+    candidates: list[dict[str, Any]] = []
+    for key in ("geocoding", "osm", "street_interpolated"):
+        candidate = data.get(key)
+        if isinstance(candidate, dict):
+            candidates.append(candidate)
+
+    best: tuple[tuple[int, int], dict[str, Any]] | None = None
+    for candidate in candidates:
+        if candidate.get("address_accepted") is not True:
+            continue
+        if _int_value(candidate.get("address_match_percent")) < 100:
+            continue
+        if candidate.get("latitude") is None or candidate.get("longitude") is None:
+            continue
+
+        source = str(candidate.get("source") or "").upper()
+        location_type = str(candidate.get("location_type") or "").upper()
+        confidence = _int_value(candidate.get("confidence"))
+        place_rank = _int_value(candidate.get("place_rank"))
+        precise_google = source == "GOOGLE" and location_type == "ROOFTOP" and confidence >= 80
+        exact_osm_house = source == "OSM" and place_rank >= 30
+        if not (precise_google or exact_osm_house):
+            continue
+
+        rank = (
+            3 if precise_google else 2 if exact_osm_house else 1,
+            confidence,
+        )
+        if best is None or rank > best[0]:
+            best = (rank, candidate)
+
+    if best is None:
+        return False, "", 0, None
+
+    candidate = best[1]
+    source = str(candidate.get("source") or "geocoder").upper()
+    location_type = str(candidate.get("location_type") or "UNKNOWN").upper()
+    confidence = _int_value(candidate.get("confidence"))
+    distance = candidate.get("coord_distance_m")
+    distance_m = _float_value(distance, -1.0) if distance is not None else None
+    reason = f"{_AGENT2_ADDRESS_FOUND_REASON} ({source} {location_type})"
+    return True, reason, confidence, distance_m
+
+
+def _agent2_failed_validation(data: dict[str, Any] | None) -> tuple[bool, str, int, float | None]:
+    """Return true when Agent 2 has evidence but not enough proof for verified/found."""
+    if not isinstance(data, dict):
+        return False, "", 0, None
+
+    best: tuple[tuple[int, int], dict[str, Any]] | None = None
+    for key in ("geocoding", "osm", "street_interpolated"):
+        candidate = data.get(key)
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("latitude") is None or candidate.get("longitude") is None:
+            continue
+        match = _int_value(candidate.get("address_match_percent"))
+        confidence = _int_value(candidate.get("confidence"))
+        accepted = candidate.get("address_accepted") is True
+        ok = candidate.get("ok") is True
+        if not ok and not accepted and match <= 0:
+            continue
+        source = str(candidate.get("source") or "").upper()
+        location_type = str(candidate.get("location_type") or "").upper()
+        interpolated_or_soft = location_type in {"RANGE_INTERPOLATED", "GEOMETRIC_CENTER", "APPROXIMATE"}
+        partial = match > 0 and match < 100
+        if not (interpolated_or_soft or partial or bool(candidate.get("query_alias")) or ok):
+            continue
+        rank = (match, confidence)
+        if best is None or rank > best[0]:
+            best = (rank, candidate)
+
+    if best is None:
+        return False, "", 0, None
+
+    candidate = best[1]
+    source = str(candidate.get("source") or "geocoder").upper()
+    location_type = str(candidate.get("location_type") or "UNKNOWN").upper()
+    confidence = _int_value(candidate.get("confidence"))
+    distance = candidate.get("coord_distance_m")
+    distance_m = _float_value(distance, -1.0) if distance is not None else None
+    match = _int_value(candidate.get("address_match_percent"))
+    reason = f"Address not found or could not be validated ({source} {location_type}, match={match}%)"
+    return True, reason, confidence, distance_m
+
+
+def _agent2_confirmed_not_found(data: dict[str, Any] | None) -> tuple[bool, str, int, float | None]:
+    """Return true only for strong negative Google evidence."""
+    if not isinstance(data, dict):
+        return False, "", 0, None
+    found, _, _, _ = _agent2_exact_address_found(data)
+    failed, _, _, _ = _agent2_failed_validation(data)
+    google = data.get("geocoding")
+    if found or failed or not isinstance(google, dict):
+        return False, "", 0, None
+    if google.get("zero_results") is True or str(google.get("google_status") or "").upper() == "ZERO_RESULTS":
+        return True, _AGENT2_NOT_FOUND_REASON, _int_value(google.get("confidence")), None
+    return False, "", 0, None
+
+
+def _address_validation_exact_warning_found(meta: dict[str, Any] | None) -> tuple[bool, str, int, float | None]:
+    """Return true for soft coordinate warnings where address text matched exactly."""
+    if not isinstance(meta, dict):
+        return False, "", 0, None
+    validation = meta.get("address_validation")
+    if not isinstance(validation, dict):
+        return False, "", 0, None
+    if str(validation.get("match_status") or "").strip().upper() != "MISMATCH_WARN":
+        return False, "", 0, None
+    forward_pct = _int_value(validation.get("forward_address_match_percent"))
+    reverse_pct = _int_value(validation.get("reverse_address_match_percent"))
+    address_pct = _int_value(validation.get("address_match_percent"))
+    if max(forward_pct, reverse_pct, address_pct) < 100:
+        return False, "", 0, None
+    confidence = _int_value(validation.get("confidence_score"))
+    distance = validation.get("distance_m")
+    distance_m = _float_value(distance, -1.0) if distance is not None else None
+    provider = str(validation.get("selected_provider") or "geocoder").upper()
+    reason = f"Address found by exact geocoder match with coordinate warning ({provider})"
+    return True, reason, confidence, distance_m
 
 
 def _ensure_rule_engine_table(session) -> None:
     from sqlalchemy import select as _sel
 
-    if session.execute(_sel(AgentTable).where(AgentTable.agent_name == _RULE_ENGINE_AGENT)).scalar_one_or_none():
+    color_rules = [
+        {"field": "rule_status", "value": "valid", "color": "#006100", "label": "Valid / Verified"},
+        {"field": "rule_status", "value": "duplicate", "color": "#ffffff", "label": "Duplicate Address"},
+        {"field": "rule_status", "value": "invalid", "color": "#C00000", "label": "Invalid / Not Found"},
+        {"field": "rule_status", "value": "new", "color": "#9C6500", "label": "New Address"},
+        {"field": "rule_status", "value": "excluded", "color": "#ffffff", "label": "Address Data Not Given"},
+    ]
+    existing = session.execute(_sel(AgentTable).where(AgentTable.agent_name == _RULE_ENGINE_AGENT)).scalar_one_or_none()
+    if existing:
+        existing.color_rules = color_rules
+        session.flush()
         return
     session.add(AgentTable(
         agent_name=_RULE_ENGINE_AGENT,
         display_name="Rule Engine",
         owner="system",
         description="Final rule status emitted by the pipeline for map color coding.",
-        color_rules=[
-            {"field": "rule_status", "value": "valid", "color": "#006100", "label": "Valid / Verified"},
-            {"field": "rule_status", "value": "duplicate", "color": "#ffffff", "label": "Duplicate Address"},
-            {"field": "rule_status", "value": "invalid", "color": "#C00000", "label": "Invalid / Not Found"},
-            {"field": "rule_status", "value": "new", "color": "#9C6500", "label": "New Address"},
-        ],
+        color_rules=color_rules,
     ))
     session.flush()
 
@@ -289,7 +446,7 @@ def _classify_addresses(job_id: str) -> tuple[list[int], list[int], list[int]]:
             has_coords = bool(lat and lon)
             has_real_address = bool(resolve_upload_address_line(address_text, meta))
 
-            if has_coords:
+            if has_coords and not has_real_address:
                 coord_only.append(row.id)
             if has_real_address:
                 addr_only.append(row.id)
@@ -467,8 +624,9 @@ def _ids_with_agent123_confidence_below(
 
 def _agent1_match_status(addr: Address) -> str:
     """Return the coordinate/address match status used by the A1 handoff gate."""
-    if addr.coord_address_match_status not in (None, ""):
-        return str(addr.coord_address_match_status).strip().upper()
+    coord_status = getattr(addr, "coord_address_match_status", None)
+    if coord_status not in (None, ""):
+        return str(coord_status).strip().upper()
     meta = addr.raw_metadata if isinstance(addr.raw_metadata, dict) else {}
     validation = (
         meta.get("address_validation")
@@ -495,10 +653,6 @@ def _ids_with_real_address(job_id: str, candidate_ids: list[int]) -> list[int]:
         eligible: list[int] = []
         candidate_order = {address_id: idx for idx, address_id in enumerate(candidate_ids)}
         for row in rows:
-            # A coordinate/address MATCH is already resolved. Do not spend a
-            # Smarty/Melissa request re-validating the same address.
-            if _agent1_match_status(row) == "MATCH":
-                continue
             meta = row.raw_metadata or {}
             final = meta.get("final_resolution") if isinstance(meta.get("final_resolution"), dict) else {}
             address_text = (
@@ -746,6 +900,15 @@ def _apply_resolution_gate(job_id: str, candidate_ids: list[int], agent_name: st
                 score = _score(data.get("confidence"))
                 if str(status or "").lower() in {"failed", "error", "skipped"}:
                     score = 0
+                upload_line = resolve_upload_address_line(
+                    getattr(addr, "source_raw_address", None) or addr.raw_address,
+                    meta,
+                )
+                has_coords = getattr(addr, "latitude", None) not in (None, 0, "") and getattr(addr, "longitude", None) not in (None, 0, "")
+                coord_status = _agent1_match_status(addr)
+                if upload_line and has_coords and coord_status and coord_status != "MATCH":
+                    score = 0
+                    status = coord_status
                 address = data.get("formatted_address") or addr.raw_address
                 lat = data.get("latitude") or addr.latitude
                 lon = data.get("longitude") or addr.longitude
@@ -1300,7 +1463,7 @@ def _flow_rule_status(meta: dict[str, Any], default_confidence: int) -> tuple[st
 def _refresh_rule_classification_after_processing(job_id: str) -> dict[str, int]:
     """Refresh raw-vs-final map/export rule colors after all agents complete."""
     session = get_session_factory()()
-    counts = {"verified": 0, "duplicate": 0, "invalid": 0, "new": 0}
+    counts = {"verified": 0, "duplicate": 0, "invalid": 0, "new": 0, "excluded": 0}
     try:
         try:
             job_uuid = UUID(str(job_id))
@@ -1322,6 +1485,11 @@ def _refresh_rule_classification_after_processing(job_id: str) -> dict[str, int]
         a1_map = {
             r.address_id: r for r in session.query(Agent1Result)
             .filter(Agent1Result.address_id.in_(row_ids))
+            .all()
+        } if row_ids else {}
+        agent2_map = {
+            r.address_id: r.data for r in session.query(AgentResult)
+            .filter(AgentResult.address_id.in_(row_ids), AgentResult.agent_name == "agent2_geocoding")
             .all()
         } if row_ids else {}
 
@@ -1371,16 +1539,52 @@ def _refresh_rule_classification_after_processing(job_id: str) -> dict[str, int]
                 confidence = 0
 
             raw_final_distance = _distance_m(row.latitude, row.longitude, final_lat, final_lon)
+            agent2_found, agent2_reason, agent2_confidence, agent2_distance = _agent2_exact_address_found(
+                agent2_map.get(row.id)
+            )
+            agent2_not_found, agent2_not_found_reason, agent2_not_found_confidence, agent2_not_found_distance = (
+                _agent2_confirmed_not_found(agent2_map.get(row.id))
+            )
+            agent2_failed, agent2_failed_reason, agent2_failed_confidence, agent2_failed_distance = (
+                _agent2_failed_validation(agent2_map.get(row.id))
+            )
+            warning_found, warning_reason, warning_confidence, warning_distance = _address_validation_exact_warning_found(
+                meta
+            )
             source_key = raw_key
             if is_sticky_duplicate(meta):
                 status, color, reason = "duplicate", "white", "Duplicate address in uploaded raw data"
             elif raw_key and source_key in seen_address_keys:
                 status, color, reason = "duplicate", "white", "Duplicate address in uploaded raw data"
+            elif is_missing_address_record(meta, row.raw_address):
+                status, color, reason = "excluded", "", MISSING_ADDRESS_REASON
+            elif is_interpolated_forward_reverse_conflict(meta):
+                status, color, reason = "invalid", "red", INTERPOLATED_FORWARD_CONFLICT_REASON
             elif role == "geospatial" and raw_key and raw_key not in tabular_keys:
                 if is_uploaded_geospatial_input(meta):
                     status, color, reason = "verified", "green", "Uploaded KMZ address present in source data"
                 else:
                     status, color, reason = "new", "yellow", "New address identified from discovery agents but not present in uploaded data"
+            elif agent2_found:
+                status, color, reason = "verified", "green", agent2_reason
+                confidence = max(confidence, agent2_confidence)
+                if agent2_distance is not None:
+                    raw_final_distance = agent2_distance
+            elif warning_found:
+                status, color, reason = "verified", "green", warning_reason
+                confidence = max(confidence, warning_confidence)
+                if warning_distance is not None:
+                    raw_final_distance = warning_distance
+            elif agent2_not_found:
+                status, color, reason = "invalid", "red", agent2_not_found_reason
+                confidence = max(confidence, agent2_not_found_confidence)
+                if agent2_not_found_distance is not None:
+                    raw_final_distance = agent2_not_found_distance
+            elif agent2_failed:
+                status, color, reason = "invalid", "red", agent2_failed_reason
+                confidence = max(confidence, agent2_failed_confidence)
+                if agent2_failed_distance is not None:
+                    raw_final_distance = agent2_failed_distance
             elif final_address and final_lat is not None and final_lon is not None:
                 status, color, reason = _flow_rule_status(meta, confidence)
             else:

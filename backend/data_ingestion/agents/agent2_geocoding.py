@@ -672,8 +672,55 @@ def _geocode_accepted(result: dict[str, Any]) -> bool:
     )
 
 
+def _fm_road_query_aliases(address: str) -> list[str]:
+    """Return safer query aliases for rural FM-road addresses."""
+    text = str(address or "")
+    aliases: list[str] = []
+    patterns = (
+        (r"\bFM\s+ROAD\s+(\d+)\b", r"FM \1"),
+        (r"\bFM\s+RD\s+(\d+)\b", r"FM \1"),
+        (r"\bFARM\s+TO\s+MARKET\s+ROAD\s+(\d+)\b", r"FM \1"),
+        (r"\bFARM\s+TO\s+MARKET\s+RD\s+(\d+)\b", r"FM \1"),
+        (r"\bFARM\s+TO\s+MARKET\s+(\d+)\b", r"FM \1"),
+    )
+    for pattern, replacement in patterns:
+        alias = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        if alias != text and alias not in aliases:
+            aliases.append(alias)
+    return aliases
+
+
+def _imperial_tx_query_aliases(address: str) -> list[str]:
+    """Return local aliases used by map providers around Imperial, TX."""
+    text = str(address or "")
+    normalized = " ".join(text.upper().replace(",", " ").split())
+    if "IMPERIAL" not in normalized or "TX" not in normalized:
+        return []
+
+    aliases: list[str] = []
+    patterns = (
+        (r"\bCOOLIDGE\b", "COOLEDGE"),
+        (r"\bSTATE\s+HIGHWAY\s+11\b", "FM 11"),
+        (r"\bHIGHWAY\s+11\b", "FM 11"),
+        (r"\bHWY\s+11\b", "FM 11"),
+    )
+    for pattern, replacement in patterns:
+        alias = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        if alias != text and alias not in aliases:
+            aliases.append(alias)
+    return aliases
+
+
+def _geocode_query_aliases(address: str) -> list[str]:
+    aliases: list[str] = []
+    for alias in [*_fm_road_query_aliases(address), *_imperial_tx_query_aliases(address)]:
+        if alias not in aliases:
+            aliases.append(alias)
+    return aliases
+
+
 def _empty_result(source: str) -> dict[str, Any]:
-    return {
+    result = {
         "formatted_address": "",
         "latitude": None,
         "longitude": None,
@@ -685,6 +732,13 @@ def _empty_result(source: str) -> dict[str, Any]:
         "is_estimated": source == "INTERPOLATED",
         "ok": False,
     }
+    if source == "GOOGLE":
+        result.update({
+            "google_status": "",
+            "google_error_message": "",
+            "zero_results": False,
+        })
+    return result
 
 
 def _forward_geocode_google(
@@ -731,7 +785,11 @@ def _forward_geocode_google(
                 data.get("status"),
                 data.get("error_message"),
             )
-            return _empty_result("GOOGLE")
+            empty = _empty_result("GOOGLE")
+            empty["google_status"] = str(data.get("status") or "")
+            empty["google_error_message"] = str(data.get("error_message") or "")
+            empty["zero_results"] = data.get("status") == "ZERO_RESULTS"
+            return empty
         r = data["results"][0]
         loc = r["geometry"]["location"]
         loc_type = (r.get("geometry", {}).get("location_type") or "").upper()
@@ -746,6 +804,9 @@ def _forward_geocode_google(
             "fallback_used": False,
             "is_estimated": False,
             "ok": True,
+            "google_status": str(data.get("status") or ""),
+            "google_error_message": str(data.get("error_message") or ""),
+            "zero_results": False,
         }
         _log_info(
             "_forward_geocode_google OUT: formatted_address=%r lat=%r lon=%r "
@@ -1098,6 +1159,36 @@ def _geocode_with_fallback(
             if has_google_key
             else _empty_result("GOOGLE")
         )
+        if has_google_key and not _geocode_accepted(google):
+            best_alias_candidate: dict[str, Any] | None = None
+            for alias in _geocode_query_aliases(address):
+                alias_google = _finalize_geocode_result(
+                    _forward_geocode_google(alias, hint_lat=hint_lat, hint_lon=hint_lon, addr=addr),
+                    input_address=alias,
+                    hint_lat=hint_lat,
+                    hint_lon=hint_lon,
+                    a1=a1,
+                    addr=addr,
+                )
+                if _geocode_accepted(alias_google):
+                    alias_google["query_alias"] = alias
+                    alias_google["_decision_reason"] = (
+                        f"Google accepted query alias {alias!r} "
+                        f"(match={alias_google.get('address_match_percent')}%)"
+                    )
+                    google = alias_google
+                    steps.append(f"  [GOOGLE] accepted query alias: {alias}")
+                    break
+                if alias_google.get("ok"):
+                    alias_google["query_alias"] = alias
+                    current_match = int(float((best_alias_candidate or {}).get("address_match_percent") or 0))
+                    alias_match = int(float(alias_google.get("address_match_percent") or 0))
+                    if best_alias_candidate is None or alias_match > current_match:
+                        best_alias_candidate = alias_google
+            else:
+                if best_alias_candidate is not None:
+                    google = best_alias_candidate
+                    steps.append(f"  [GOOGLE] partial query alias: {google.get('query_alias')}")
         executed_models["geocoding"] = google
         steps.append(_provider_step_label(google, step_name="GOOGLE"))
         if _geocode_accepted(google) and google["confidence"] >= _GOOGLE_CONFIDENCE_THRESHOLD:

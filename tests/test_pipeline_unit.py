@@ -126,7 +126,7 @@ class TestAgentQualityRules:
         row = self._address_row(1, metadata_status="match")
         assert _agent1_match_status(row) == "MATCH"
 
-    def test_real_address_gate_excludes_existing_matches_from_smarty(self):
+    def test_real_address_gate_keeps_existing_matches_for_smarty_validation(self):
         rows = [
             self._address_row(1, status="MATCH"),
             self._address_row(2, status="MISMATCH"),
@@ -140,7 +140,7 @@ class TestAgentQualityRules:
             "data_ingestion.agents.pipeline_runner.get_session_factory",
             return_value=lambda: session,
         ):
-            assert _ids_with_real_address("job-id", [1, 2, 3, 4]) == [2, 4]
+            assert _ids_with_real_address("job-id", [1, 2, 3, 4]) == [1, 2, 3, 4]
 
         session.close.assert_called_once()
 
@@ -190,6 +190,50 @@ class TestAgentQualityRules:
         assert final["confidence"] == 100
         assert final["provider"] == "GOOGLE_FORWARD"
         assert final["source_agent"] == "agent2_geocoding"
+
+    def test_agent2_does_not_finalize_real_address_when_coord_validation_mismatched(self):
+        address = SimpleNamespace(
+            id=1,
+            raw_address="102 IMPERIAL ST",
+            source_raw_address="102 IMPERIAL ST",
+            latitude=31.274467,
+            longitude=-102.692332,
+            coord_address_match_status="ADDRESS_MISMATCH",
+            raw_metadata={},
+        )
+        agent2_result = SimpleNamespace(
+            address_id=1,
+            data={
+                "status": "geocoded",
+                "confidence": 100,
+                "formatted_address": "102 Imperial Street, Imperial, TX 79743, USA",
+                "latitude": 31.2741488,
+                "longitude": -102.6918275,
+                "source": "GOOGLE_FORWARD",
+            },
+        )
+        session = MagicMock()
+        session.scalars.side_effect = [
+            MagicMock(all=MagicMock(return_value=[address])),
+            MagicMock(all=MagicMock(return_value=[agent2_result])),
+        ]
+
+        with patch(
+            "data_ingestion.agents.pipeline_runner.get_session_factory",
+            return_value=lambda: session,
+        ):
+            with patch("sqlalchemy.orm.attributes.flag_modified"):
+                continued, counts = _apply_resolution_gate(
+                    "00000000-0000-0000-0000-000000000001",
+                    [1],
+                    "agent2_geocoding",
+                    70,
+                )
+
+        assert continued == [1]
+        assert counts == {"total": 1, "accepted": 0, "continued": 1}
+        assert "final_resolution" not in address.raw_metadata
+        assert "score below threshold" in address.raw_metadata["routing_history"][0]["reason"]
 
     def test_agent5_analyzed_status_can_pass_confidence_gate(self):
         assert _status_is_match("analyzed") is True
