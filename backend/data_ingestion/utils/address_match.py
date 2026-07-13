@@ -15,6 +15,12 @@ from data_ingestion.utils.res_com_addressing import (
 )
 
 _ZIP_RE = re.compile(r"\b(\d{5})(?:-\d{4})?\b")
+# Fractional civic numbers: 75 1/2, 75-1/2, 75½ (common in CA/US addresses).
+_HOUSE_FRACTION_RE = re.compile(
+    r"^\s*(\d+(?:-\d+)?(?:\s*[½¼¾]|\s*1/[234]|\s*3/4|-[½¼¾]|-1/[234]|-3/4))"
+    r"(?=\s|,|$)",
+    re.I,
+)
 _HOUSE_ATTACHED_SUFFIX_RE = re.compile(r"^\s*(\d+(?:-\d+)?[A-Za-z])\b")
 _HOUSE_SPACED_UNIT_RE = re.compile(r"^\s*(\d+(?:-\d+)?)\s+([A-Za-z])\b")
 _HOUSE_PLAIN_RE = re.compile(r"^\s*(\d+(?:-\d+)?)\b")
@@ -23,6 +29,7 @@ _STATE_RE = re.compile(r"\b([A-Z]{2})\b")
 _ORDINAL_SUFFIX_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b", re.I)
 # Single-letter tokens after the house number that are street directions, not unit suffixes.
 _COMPASS_UNIT_LETTERS = frozenset("NSEW")
+_FRACTION_CHAR_MAP = str.maketrans({"½": "1/2", "¼": "1/4", "¾": "3/4"})
 
 # Fuzzy token-set ratio at or above this → treat as 100% text match (env-tunable).
 _FUZZY_MATCH_THRESHOLD = int(os.environ.get("FTTH_ADDRESS_MATCH_FUZZY_THRESHOLD", "92"))
@@ -51,10 +58,22 @@ def _extract_zip(text: str) -> str | None:
 
 
 def extract_house_number(text: str) -> str | None:
-    """Leading house/building number, including unit suffixes (278A, 278 A, 49-5)."""
+    """Leading house/building number, including fractions and unit suffixes.
+
+    Supports forms like 278A, 278 A, 49-5, 75 1/2, 75-1/2, and 75½.
+    """
     if not text:
         return None
     stripped = text.strip()
+    m = _HOUSE_FRACTION_RE.match(stripped)
+    if m:
+        token = m.group(1).upper()
+        token = (
+            token.replace("½", " 1/2")
+            .replace("¼", " 1/4")
+            .replace("¾", " 3/4")
+        )
+        return re.sub(r"\s+", " ", token).strip()
     m = _HOUSE_ATTACHED_SUFFIX_RE.match(stripped)
     if m:
         return m.group(1).upper()
@@ -75,10 +94,44 @@ def _extract_house_number(text: str) -> str | None:
 
 
 def _normalize_house_number(value: str | None) -> str:
-    """Normalize for equality checks (4905 ≠ 49-5)."""
+    """Normalize for equality checks (75 1/2 == 75½; 4905 ≠ 49-5)."""
     if not value:
         return ""
-    return re.sub(r"[\s-]+", "", str(value).strip().upper())
+    t = str(value).strip().upper().translate(_FRACTION_CHAR_MAP)
+    # Keep slash so 75 1/2 and 75-1/2 both become 751/2; do not drop hyphen
+    # inside ranges like 49-5 (those remain distinct from 4905).
+    t = re.sub(r"\s+", "", t)
+    t = t.replace("-1/", "1/").replace("-3/", "3/")
+    return t
+
+
+def house_numbers_equal(left: str | None, right: str | None) -> bool:
+    """True when two house-number tokens refer to the same civic number."""
+    a = _normalize_house_number(left)
+    b = _normalize_house_number(right)
+    return bool(a and b and a == b)
+
+
+def strip_leading_house_number(text: str) -> str:
+    """Remove a leading civic house number (including fractions/units) from an address line."""
+    if not text:
+        return ""
+    stripped = text.strip()
+    if not extract_house_number(stripped):
+        return stripped
+    m = _HOUSE_FRACTION_RE.match(stripped)
+    if m:
+        return stripped[m.end():].lstrip(" ,")
+    m = _HOUSE_ATTACHED_SUFFIX_RE.match(stripped)
+    if m:
+        return stripped[m.end():].lstrip(" ,")
+    m = _HOUSE_SPACED_UNIT_RE.match(stripped)
+    if m and m.group(2).upper() not in _COMPASS_UNIT_LETTERS:
+        return stripped[m.end():].lstrip(" ,")
+    m = _HOUSE_PLAIN_RE.match(stripped)
+    if m:
+        return stripped[m.end():].lstrip(" ,")
+    return stripped
 
 
 def house_numbers_match(upload_line: str, formatted: str, *, geo: dict | None = None) -> bool:

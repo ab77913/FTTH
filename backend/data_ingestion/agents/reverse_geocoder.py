@@ -75,10 +75,13 @@ from data_ingestion.database.geo import set_address_geom
 from data_ingestion.database.models import Address, Agent1Result
 from data_ingestion.utils.address_match import (
     address_match_percent_for_geo,
+    extract_house_number,
     finalize_geocoder_confidence,
+    house_numbers_equal,
     looks_like_street_address,
     resolve_upload_address_line,
     strip_kml_category_prefix,
+    strip_leading_house_number,
 )
 from data_ingestion.utils.address_metadata import sync_reverse_geocode_confidence_in_raw_metadata
 from data_ingestion.utils.api_result_metadata import persist_provider_result
@@ -1068,8 +1071,8 @@ def _forward_bounds(src_lat: float, src_lon: float, delta: float = 0.12) -> tupl
 
 
 def _house_number_from_text(text: str) -> str:
-    m = re.match(r"^(\d+[A-Za-z]?)\s+", (text or "").strip())
-    return m.group(1) if m else ""
+    """Leading civic number from an address line (includes fractions like 75 1/2)."""
+    return extract_house_number(text or "") or ""
 
 
 _ROAD_ABBREV = {
@@ -1097,8 +1100,8 @@ def _same_road_name(upload_line: str, geo: dict[str, Any]) -> bool:
     road = str(geo.get("road") or "").strip()
     if not road or not upload_line:
         return False
-    # Strip house number prefix from upload_line, keep only the street part.
-    street_portion = re.sub(r"^\d+[A-Za-z]?\s+", "", upload_line.strip(), count=1)
+    # Strip house number prefix (incl. fractions) from upload_line, keep street part.
+    street_portion = strip_leading_house_number(upload_line)
     street_portion = street_portion.split(",")[0]  # drop city/state suffix if present
     road_norm = _normalize_road(road)
     street_norm = _normalize_road(street_portion)
@@ -1409,9 +1412,9 @@ def _match_geo_rank(
     *,
     direction: str,
 ) -> tuple[int, int, int, int, int, int]:
-    input_house = _house_number_from_text(upload_line or "").upper()
-    geo_house = _geo_house_number(geo).upper()
-    exact_house = int(bool(input_house and geo_house and input_house == geo_house))
+    input_house = _house_number_from_text(upload_line or "")
+    geo_house = _geo_house_number(geo)
+    exact_house = int(bool(house_numbers_equal(input_house, geo_house)))
     address_type = _best_geo_address_type(geo)
     address_type_quality = _ADDRESS_TYPE_QUALITY.get(address_type, 0)
     location_type = str(geo.get("location_type") or _reverse_geo_location_type(geo) or "").upper()
@@ -1485,9 +1488,9 @@ def _reverse_precise_house_number_match(
     if not upload_line or not geo:
         return False
     loc = str(geo.get("location_type") or _reverse_geo_location_type(geo) or "").upper()
-    input_hn = _house_number_from_text(upload_line).upper()
+    input_hn = _house_number_from_text(upload_line)
     reverse_hn = _geo_house_number(geo)
-    if not (input_hn and reverse_hn and input_hn == reverse_hn):
+    if not house_numbers_equal(input_hn, reverse_hn):
         return False
     if loc == "ROOFTOP":
         return True
@@ -1699,27 +1702,29 @@ def _validate_address_coords(
             coord_distance_m=distance_m,
         )
 
-        raw_hn = _house_number_from_text(upload_line).upper()
+        raw_hn = _house_number_from_text(upload_line)
         forced_match = False
         reverse_hn = _geo_house_number(reverse_geo)
         forward_hn = _geo_house_number(forward)
-        reverse_house_number_conflict = bool(raw_hn and reverse_hn and reverse_hn != raw_hn)
+        reverse_house_number_conflict = bool(
+            raw_hn and reverse_hn and not house_numbers_equal(raw_hn, reverse_hn)
+        )
         address_first_forward_match = (
             bool(forward)
             and distance_m is not None
             and distance_m <= _FORWARD_EXACT_PIN_TOLERANCE_M
             and match_scores["forward"] >= _ADDRESS_MATCH_REQUIRED
             and _rooftop_full_match(forward, match_scores["forward"])
-            and (not raw_hn or forward_hn == raw_hn)
+            and (not raw_hn or house_numbers_equal(forward_hn, raw_hn))
         )
         if raw_hn:
             if forward:
-                if forward_hn == raw_hn:
+                if house_numbers_equal(forward_hn, raw_hn):
                     match_scores["forward"] = 100
                     match_scores["best"] = max(match_scores["best"], 100)
                     forced_match = True
             if reverse_geo:
-                if reverse_hn == raw_hn:
+                if house_numbers_equal(reverse_hn, raw_hn):
                     match_scores["reverse"] = 100
                     match_scores["best"] = max(match_scores["best"], 100)
                     forced_match = True

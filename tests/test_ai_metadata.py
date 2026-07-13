@@ -286,6 +286,23 @@ def test_spaced_unit_suffix_extracts_as_attached_form() -> None:
     assert extract_house_number("278 N RIVER RD") == "278"
 
 
+def test_fractional_house_number_extraction_and_equality() -> None:
+    from data_ingestion.utils.address_match import (
+        extract_house_number,
+        house_numbers_equal,
+        strip_leading_house_number,
+    )
+
+    assert extract_house_number("75 1/2 DOROTHY ST, ST CATHARINES, ON, L2N6B7") == "75 1/2"
+    assert extract_house_number("75-1/2 Dorothy St") == "75-1/2"
+    assert extract_house_number("75½ Dorothy St") == "75 1/2"
+    assert house_numbers_equal("75 1/2", "75 1/2")
+    assert house_numbers_equal("75 1/2", "75-1/2")
+    assert house_numbers_equal("75 1/2", "75½")
+    assert not house_numbers_equal("75", "75 1/2")
+    assert strip_leading_house_number("75 1/2 DOROTHY ST, ST CATHARINES") == "DOROTHY ST, ST CATHARINES"
+
+
 def test_rooftop_house_number_match_rejects_spaced_unit_mismatch() -> None:
     from data_ingestion.agents.agent2_geocoding import _rooftop_house_number_match
 

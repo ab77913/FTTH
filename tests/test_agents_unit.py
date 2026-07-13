@@ -2601,6 +2601,62 @@ class TestAddressCoordinateValidation:
         assert addr.raw_metadata["address_validation"]["selected_direction"] == "source"
         assert "208" in addr.coord_address_validation_notes
 
+    def test_fractional_house_number_matches_reverse_at_pin(self):
+        """75 1/2 must not be parsed as 75 and falsely ADDRESS_MISMATCH."""
+        from data_ingestion.agents.reverse_geocoder import _validate_address_coords
+
+        addr = SimpleNamespace(
+            id=17907,
+            raw_address="75 1/2 DOROTHY ST, ST CATHARINES, ON, L2N6B7",
+            source_raw_address=None,
+            city="ST CATHARINES",
+            state="ON",
+            zip_code="L2N6B7",
+            latitude=43.18260328,
+            longitude=-79.25902402,
+            source_latitude=None,
+            source_longitude=None,
+            validated_raw_address=None,
+            validated_street_line=None,
+            validated_postcode=None,
+            validated_city_state=None,
+            validated_country_code=None,
+            validated_latitude=None,
+            validated_longitude=None,
+            coord_address_match_status=None,
+            coord_address_distance_m=None,
+            coord_address_validation_notes=None,
+            reverse_geocode_confidence_score=None,
+            raw_metadata={},
+        )
+        reverse_at_pin = {
+            "source": "google",
+            "display_name": "75 1/2 Dorothy St, St. Catharines, ON L2N 4A8, Canada",
+            "formatted_address": "75 1/2 Dorothy St, St. Catharines, ON L2N 4A8, Canada",
+            "house_number": "75 1/2",
+            "road": "Dorothy Street",
+            "city": "St. Catharines",
+            "state": "ON",
+            "postcode": "L2N 4A8",
+            "country_code": "ca",
+            "location_type": "ROOFTOP",
+            "latitude": 43.1826237,
+            "longitude": -79.2590761,
+            "address_types": ["street_address"],
+        }
+
+        with patch("data_ingestion.agents.reverse_geocoder._google_api_key", return_value=""):
+            with patch("data_ingestion.agents.reverse_geocoder.flag_modified"):
+                result = _validate_address_coords(
+                    addr,
+                    reverse_geo=reverse_at_pin,
+                    allow_reverse_fallback=False,
+                )
+
+        assert result["status"] == "MATCH"
+        assert addr.coord_address_match_status == "MATCH"
+        assert "does not match" not in (addr.coord_address_validation_notes or "")
+
 
 class TestReverseGeocodeConfidenceScoring:
     def test_apply_reverse_confidence_caps_when_text_match_below_100(self):
