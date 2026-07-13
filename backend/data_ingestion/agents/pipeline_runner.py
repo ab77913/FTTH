@@ -58,9 +58,15 @@ from data_ingestion.database.models            import (
 )
 from data_ingestion.utils.ai_metadata import ai_metadata_dict
 from data_ingestion.utils.agent_logging import configure_agent_logger, log_payload
+from data_ingestion.utils.discovery_source import (
+    format_new_address_discovery_summary,
+    resolve_new_address_discovery,
+)
 from data_ingestion.utils.rule_classification import (
     INTERPOLATED_FORWARD_CONFLICT_REASON,
     MISSING_ADDRESS_REASON,
+    coord_address_mismatch_reason,
+    is_coord_address_mismatch,
     is_interpolated_forward_reverse_conflict,
     is_missing_address_record,
     is_sticky_duplicate,
@@ -1560,11 +1566,28 @@ def _refresh_rule_classification_after_processing(job_id: str) -> dict[str, int]
                 status, color, reason = "excluded", "", MISSING_ADDRESS_REASON
             elif is_interpolated_forward_reverse_conflict(meta):
                 status, color, reason = "invalid", "red", INTERPOLATED_FORWARD_CONFLICT_REASON
+            elif is_coord_address_mismatch(meta, row.coord_address_match_status):
+                status, color, reason = "invalid", "red", coord_address_mismatch_reason(meta)
             elif role == "geospatial" and raw_key and raw_key not in tabular_keys:
                 if is_uploaded_geospatial_input(meta):
                     status, color, reason = "verified", "green", "Uploaded KMZ address present in source data"
                 else:
-                    status, color, reason = "new", "yellow", "New address identified from discovery agents but not present in uploaded data"
+                    agent, provider, location_type = resolve_new_address_discovery(meta)
+                    summary = format_new_address_discovery_summary(
+                        agent=agent,
+                        provider=provider,
+                        location_type=location_type,
+                    )
+                    reason = "New address identified from discovery agents but not present in uploaded data"
+                    if summary:
+                        reason = f"{reason} ({summary})"
+                        meta.update({
+                            "new_address_discovery_agent": agent,
+                            "new_address_discovery_provider": provider,
+                            "new_address_discovery_location_type": location_type,
+                            "new_address_discovery_source": summary,
+                        })
+                    status, color, reason = "new", "yellow", reason
             elif agent2_found:
                 status, color, reason = "verified", "green", agent2_reason
                 confidence = max(confidence, agent2_confidence)

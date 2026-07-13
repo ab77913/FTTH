@@ -89,7 +89,13 @@ _ATTOM_COMMERCIAL_LAND_USE_CODES = frozenset({
     "RESTAURANT", "STORE", "SHOPPING CENTER",
     "GOVERNMENT", "INSTITUTIONAL", "RELIGIOUS",
     "SCHOOL", "HOSPITAL", "AGRICULTURAL",
-    "VACANT LAND", "VACANT COMMERCIAL",
+    "VACANT COMMERCIAL",
+})
+
+# ATTOM land-use codes that map to Vacant (no structure / empty lot)
+_ATTOM_VACANT_LAND_USE_CODES = frozenset({
+    "VACANT", "VACANT LAND", "VACANT LOT", "UNIMPROVED",
+    "UNIMPROVED LAND", "NO BUILDING", "EMPTY LOT",
 })
 
 # ---------------------------------------------------------------------------
@@ -179,18 +185,24 @@ def _attom_get(path: str, params: dict[str, str], timeout: int = 15) -> dict[str
 
 def _attom_classify_land_use(land_use_raw: str) -> str:
     """
-    Map a raw ATTOM landUse string to one of: SFH | MDU | Commercial | Unknown.
+    Map a raw ATTOM landUse string to one of: SFH | MDU | Commercial | Vacant | Unknown.
 
-    SFH tokens are checked first so explicit single-family propType/propLandUse
-    values are never overridden by MDU substring matches (e.g. "CO" inside "SFR").
+    Vacant tokens are checked before residential so zoned-but-empty parcels are
+    not mislabeled as SFH. SFH tokens are checked before MDU substring matches.
     """
     upper = land_use_raw.upper().strip()
 
+    for code in _ATTOM_VACANT_LAND_USE_CODES:
+        if re.search(r"\b" + re.escape(code) + r"\b", upper):
+            return "Vacant"
+
     sfh_tokens = (
         "SINGLE FAMILY", "SINGLE-FAMILY", "SFR", "SFH",
-        "RESIDENTIAL", "RURAL RESIDENCE", "SINGLE FAMILY RESIDENCE",
+        "RURAL RESIDENCE", "SINGLE FAMILY RESIDENCE",
     )
     if any(token in upper for token in sfh_tokens):
+        return "SFH"
+    if "RESIDENTIAL" in upper and "VACANT" not in upper:
         return "SFH"
 
     for code in _ATTOM_MDU_LAND_USE_CODES:
@@ -506,6 +518,8 @@ def _parse_attom_property_record(prop: dict[str, Any]) -> dict[str, Any] | None:
             floor_count = 1
 
         confidence = 90 if structure_type not in ("Unknown",) else 60
+        if structure_type == "Vacant":
+            confidence = 85
         attom_address = (prop.get("address") or {}).get("oneLine") or ""
 
         return {
@@ -518,7 +532,7 @@ def _parse_attom_property_record(prop: dict[str, Any]) -> dict[str, Any] | None:
             "lot_size_sqft": lot_size_sqft,
             "building_sqft": building_sqft,
             "confidence": confidence,
-            "building_matched": structure_type != "Unknown",
+            "building_matched": structure_type not in {"Unknown", "Vacant"},
             "attom_matched_address": attom_address,
         }
     except Exception as exc:
@@ -696,6 +710,15 @@ _HINT_SIGNAL_LABELS: dict[str, str] = {
     "coord_mismatch_footprint_rejected": "footprint rejected due to coordinate mismatch",
     "matched_residential_footprint_fallback": "residential footprint fallback match",
     "confidence_calibrated": "confidence calibrated from address/footprint quality",
+    "address_validation_vacant_flag": "address validation marked vacant",
+    "no_building_footprint_matched": "no building footprint at coordinates",
+    "validated_address_building_fallback": "validated address/coordinates indicate a structure despite missing footprint tile",
+    "parcel_vacant_land_use": "parcel land-use indicates vacant lot",
+    "distant_footprint_rejected": "nearest footprint is too far from the address pin (likely a neighboring structure)",
+    "distant_footprint_unreliable": "Microsoft footprint offset from pin; using validated address instead",
+    "validated_pin_building_fallback": "validated ROOFTOP pin indicates a structure though Microsoft footprint was missing or offset",
+    "footprint_match_beyond_sfh_threshold": "nearest footprint too far for SFH (likely vacant lot)",
+    "attom_vacant_land_use": "assessor land-use indicates vacant lot",
 }
 
 
@@ -724,7 +747,13 @@ def build_agent4_justification(data: dict[str, Any]) -> str:
         or data.get("imagery_source") == "attom_property_api"
     )
 
-    if is_attom:
+    if str(structure).strip().lower() == "vacant":
+        signals = _format_hint_signals(data.get("hint_signals"))
+        base = "Classified as Vacant — no building confirmed at this location"
+        if signals:
+            base += f" ({signals})"
+        parts.append(base)
+    elif is_attom:
         land_use = str(data.get("attom_land_use_raw") or "").strip()
         if data.get("building_matched"):
             base = f"Classified as {structure} via ATTOM property API"
@@ -735,7 +764,13 @@ def build_agent4_justification(data: dict[str, Any]) -> str:
             parts.append("No ATTOM property match; structure unresolved")
     elif not data.get("building_matched"):
         signals = _format_hint_signals(data.get("hint_signals"))
-        if signals:
+        class_source = str(data.get("class_source") or "").strip().upper()
+        if class_source in {"VALIDATED_PIN_FALLBACK", "VALIDATED_ADDRESS_FALLBACK"}:
+            base = f"Classified as {structure} from validated ROOFTOP pin — Microsoft footprint missing or offset"
+            if signals:
+                base += f" ({signals})"
+            parts.append(base)
+        elif signals:
             parts.append(f"Building not matched — {signals}")
         else:
             parts.append("Building footprint not matched; structure unresolved")
@@ -984,26 +1019,115 @@ def _geojson_has_footprints_in_bbox(path: Path, bbox) -> bool:
         return False
 
 
-def _tile_url_for_quadkey(us_df: Any, quadkey: str) -> str | None:
+def _tile_candidates_for_quadkey(
+    links_df: Any,
+    quadkey: str,
+    *,
+    preferred_region: str | None = None,
+) -> list[dict[str, str]]:
+    """
+    Return Microsoft tile URL candidates for a quadkey.
+
+    Border tiles (Niagara / Buffalo, Detroit / Windsor, etc.) share a QuadKey
+    across Canada and UnitedStates but point at different RegionName=… blobs.
+    Prefer the region inferred from coordinates, then fall back to the sibling
+    region so a US-only filter can no longer leave Canadian jobs unmatched.
+    """
     _ensure_reference_scripts_importable()
-    from scripts.download_footprints import _normalize_quadkey  # type: ignore
+    from scripts.download_footprints import (  # type: ignore
+        _normalize_location_label,
+        _normalize_quadkey,
+    )
+
     norm = _normalize_quadkey(quadkey)
-    matched = us_df[us_df["QuadKey"].map(_normalize_quadkey) == norm]
+    matched = links_df[links_df["QuadKey"].map(_normalize_quadkey) == norm]
     if matched.empty:
-        return None
-    return str(matched.iloc[0]["Url"])
+        return []
+
+    preferred = _normalize_location_label(preferred_region) if preferred_region else ""
+    candidates: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for _, row in matched.iterrows():
+        url = str(row.get("Url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        region = _normalize_location_label(row.get("Location"))
+        candidates.append({"region": region, "url": url, "quadkey": norm})
+
+    if preferred:
+        preferred_hits = [c for c in candidates if c["region"] == preferred]
+        other_hits = [c for c in candidates if c["region"] != preferred]
+        # For North America border jobs, also try the sibling country explicitly.
+        sibling_order = []
+        if preferred == "Canada":
+            sibling_order = ["UnitedStates"]
+        elif preferred == "UnitedStates":
+            sibling_order = ["Canada"]
+        ordered = preferred_hits[:]
+        for sib in sibling_order:
+            ordered.extend(c for c in other_hits if c["region"] == sib)
+        ordered.extend(c for c in other_hits if c["region"] not in sibling_order)
+        return ordered
+    return candidates
 
 
-def _agent4_us_dataset_links() -> Any:
+def _tile_url_for_quadkey(
+    links_df: Any,
+    quadkey: str,
+    *,
+    preferred_region: str | None = None,
+) -> str | None:
+    candidates = _tile_candidates_for_quadkey(
+        links_df, quadkey, preferred_region=preferred_region
+    )
+    return candidates[0]["url"] if candidates else None
+
+
+def _agent4_dataset_links() -> Any:
+    """Full Microsoft global-buildings index (all regions), cached in-process."""
     global _AGENT4_DATASET_LINKS_CACHE
     if _AGENT4_DATASET_LINKS_CACHE is not None:
         return _AGENT4_DATASET_LINKS_CACHE
 
     _ensure_reference_scripts_importable()
-    from scripts.download_footprints import _fetch_dataset_links, _filter_us_rows  # type: ignore
+    from scripts.download_footprints import _fetch_dataset_links  # type: ignore
 
-    _AGENT4_DATASET_LINKS_CACHE = _filter_us_rows(_fetch_dataset_links())
+    _AGENT4_DATASET_LINKS_CACHE = _fetch_dataset_links()
     return _AGENT4_DATASET_LINKS_CACHE
+
+
+def _agent4_us_dataset_links() -> Any:
+    """Backward-compatible alias — returns the full index (not US-only)."""
+    return _agent4_dataset_links()
+
+
+def _preferred_ms_region_for_records(records, bbox=None) -> str | None:
+    _ensure_reference_scripts_importable()
+    from scripts.download_footprints import _infer_ms_region  # type: ignore
+
+    lats: list[float] = []
+    lons: list[float] = []
+    for rec in records or []:
+        try:
+            lats.append(float(rec["lat"]))
+            lons.append(float(rec["lon"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not lats and bbox is not None:
+        minx, miny, maxx, maxy = bbox
+        lats = [(miny + maxy) / 2.0]
+        lons = [(minx + maxx) / 2.0]
+    if not lats:
+        return None
+    return _infer_ms_region(sum(lats) / len(lats), sum(lons) / len(lons))
+
+
+def _region_cache_token(region: str | None) -> str:
+    _ensure_reference_scripts_importable()
+    from scripts.download_footprints import _normalize_location_label  # type: ignore
+
+    return _normalize_location_label(region or "Unknown").lower()
 
 
 def _geojson_cache_ready(path: Path) -> bool:
@@ -1090,7 +1214,7 @@ def _agent4_file_lock(lock_path: Path, timeout_s: float = 180.0):
             pass
 
 
-def _raw_tile_cache_path(raw_dir: Path, norm_quadkey: str, url: str) -> Path:
+def _raw_tile_cache_path(raw_dir: Path, norm_quadkey: str, url: str, region: str | None = None) -> Path:
     lower = url.lower()
     if lower.endswith(".csv.gz"):
         suffix = ".csv.gz"
@@ -1098,7 +1222,8 @@ def _raw_tile_cache_path(raw_dir: Path, norm_quadkey: str, url: str) -> Path:
         suffix = ".zip"
     else:
         suffix = ".bin"
-    return raw_dir / f"{norm_quadkey}{suffix}"
+    region_token = _region_cache_token(region)
+    return raw_dir / f"{norm_quadkey}_{region_token}{suffix}"
 
 
 def _read_or_download_tile_content(
@@ -1106,9 +1231,10 @@ def _read_or_download_tile_content(
     norm_quadkey: str,
     url: str,
     download_fn: Any,
+    region: str | None = None,
 ) -> bytes:
     raw_dir.mkdir(parents=True, exist_ok=True)
-    raw_path = _raw_tile_cache_path(raw_dir, norm_quadkey, url)
+    raw_path = _raw_tile_cache_path(raw_dir, norm_quadkey, url, region=region)
     if _geojson_cache_ready(raw_path):
         logger.info("Agent4 using cached raw Microsoft tile: %s", raw_path)
         return raw_path.read_bytes()
@@ -1169,7 +1295,8 @@ def _download_footprints_for_bbox(bbox, save_dir=None, records=None) -> str:
             _save_geojson_from_zip,
         )
 
-        us_df = _agent4_us_dataset_links()
+        links_df = _agent4_dataset_links()
+        preferred_region = _preferred_ms_region_for_records(records, bbox=bbox)
         records_by_quadkey = (
             _records_by_quadkey(records, level=_AGENT4_TILE_LEVEL)
             if records else {}
@@ -1178,7 +1305,11 @@ def _download_footprints_for_bbox(bbox, save_dir=None, records=None) -> str:
         if not quadkeys:
             quadkeys = _quadkeys_for_bbox(bbox, level=_AGENT4_TILE_LEVEL)
 
-        logger.info("Agent4 (fallback) preparing %d Microsoft tile(s)", len(quadkeys))
+        logger.info(
+            "Agent4 (fallback) preparing %d Microsoft tile(s) preferred_region=%s",
+            len(quadkeys),
+            preferred_region or "auto",
+        )
 
         gdfs: list[Any] = []
         for quadkey in sorted(quadkeys):
@@ -1186,39 +1317,62 @@ def _download_footprints_for_bbox(bbox, save_dir=None, records=None) -> str:
             tile_records = records_by_quadkey.get(norm)
             tile_bbox = _bbox_for_records(tile_records) if tile_records else bbox
             tile_minx, tile_miny, tile_maxx, tile_maxy = tile_bbox
-
-            # ── PERF FIX ────────────────────────────────────────────────
-            # Cache key is the quadkey ONLY — not the per-job bbox. The
-            # expensive decompress/convert step in _convert_tile_gz_to_geojson
-            # is therefore a one-time cost per quadkey and is reused by every
-            # future job/run that touches this tile, instead of being redone
-            # on every single pipeline run (which is what was making the
-            # Microsoft-footprint fallback look slow). Per-job spatial
-            # filtering still happens below via gpd.read_file(..., bbox=...),
-            # which is cheap.
-            tile_path = tiles_dir / f"{norm}.geojson"
-            if not _geojson_cache_ready(tile_path):
-                tile_lock_path = tile_path.with_suffix(tile_path.suffix + ".lock")
-                with _agent4_file_lock(tile_lock_path):
-                    if not _geojson_cache_ready(tile_path):
-                        url = _tile_url_for_quadkey(us_df, quadkey)
-                        if not url:
-                            logger.warning("Agent4 no Microsoft tile URL for quadkey=%s", quadkey)
-                            continue
-                        content = _read_or_download_tile_content(raw_dir, norm, url, _download_bytes)
-                        lower = url.lower()
-                        if lower.endswith(".csv.gz"):
-                            _convert_tile_gz_to_geojson(content, tile_path)
-                        elif lower.endswith(".zip"):
-                            _save_geojson_from_zip(content, tile_path)
-                        else:
-                            tile_path.write_bytes(content)
-
-            if not _geojson_cache_ready(tile_path):
+            tile_preferred = (
+                _preferred_ms_region_for_records(tile_records, bbox=tile_bbox)
+                or preferred_region
+            )
+            candidates = _tile_candidates_for_quadkey(
+                links_df, quadkey, preferred_region=tile_preferred
+            )
+            if not candidates:
+                logger.warning("Agent4 no Microsoft tile URL for quadkey=%s", quadkey)
                 continue
 
-            tile_gdf = gpd.read_file(tile_path, bbox=(tile_minx, tile_miny, tile_maxx, tile_maxy))
-            if not tile_gdf.empty:
+            tile_gdf = None
+            for candidate in candidates:
+                region = candidate["region"]
+                url = candidate["url"]
+                # Cache key includes region so Canada/US border quadkeys do not
+                # overwrite each other (same QuadKey, different tile contents).
+                tile_path = tiles_dir / f"{norm}_{_region_cache_token(region)}.geojson"
+                if not _geojson_cache_ready(tile_path):
+                    tile_lock_path = tile_path.with_suffix(tile_path.suffix + ".lock")
+                    with _agent4_file_lock(tile_lock_path):
+                        if not _geojson_cache_ready(tile_path):
+                            content = _read_or_download_tile_content(
+                                raw_dir, norm, url, _download_bytes, region=region
+                            )
+                            lower = url.lower()
+                            if lower.endswith(".csv.gz"):
+                                _convert_tile_gz_to_geojson(content, tile_path)
+                            elif lower.endswith(".zip"):
+                                _save_geojson_from_zip(content, tile_path)
+                            else:
+                                tile_path.write_bytes(content)
+
+                if not _geojson_cache_ready(tile_path):
+                    continue
+
+                candidate_gdf = gpd.read_file(
+                    tile_path, bbox=(tile_minx, tile_miny, tile_maxx, tile_maxy)
+                )
+                if candidate_gdf.empty:
+                    logger.info(
+                        "Agent4 tile quadkey=%s region=%s has no footprints in bbox; trying next region",
+                        norm,
+                        region,
+                    )
+                    continue
+                logger.info(
+                    "Agent4 using Microsoft tile quadkey=%s region=%s footprints=%d",
+                    norm,
+                    region,
+                    len(candidate_gdf),
+                )
+                tile_gdf = candidate_gdf
+                break
+
+            if tile_gdf is not None and not tile_gdf.empty:
                 gdfs.append(tile_gdf)
 
         if not gdfs:
@@ -1675,8 +1829,67 @@ def _best_address(addr: Address, a1: Agent1Result | None, a2=None) -> str:
     )
  
  
+def _infer_unit_count(structure_hint: str | None, area_m2: Any) -> int | None:
+    """Estimate units from structure hint and footprint area (matches building_agent rules)."""
+    hint = str(structure_hint or "").upper()
+    if hint in {"SFU", "SFH"}:
+        return 1
+    if hint in {"VACANT", "VACANT LOT"}:
+        return 0
+    try:
+        area = float(area_m2 or 0)
+    except (TypeError, ValueError):
+        area = 0.0
+
+    if hint in {"MDU_SMALL", "MDU"}:
+        if area <= 0:
+            return 2
+        if area < 450:
+            return 2
+        if area < 550:
+            return 3
+        return 4
+    if hint == "MDU_LARGE":
+        if area <= 0:
+            return 5
+        return max(5, int(area / 120))
+    if hint.startswith("MDU"):
+        return _infer_unit_count("MDU_SMALL", area_m2)
+    return None
+
+
+def _ensure_unit_count(enriched: dict[str, Any]) -> dict[str, Any]:
+    """Fill unit_count when structure is known but the MS agent omitted it."""
+    out = dict(enriched)
+    existing = out.get("unit_count")
+    if existing is not None and str(existing).strip() != "":
+        try:
+            if int(float(existing)) >= 0:
+                return out
+        except (TypeError, ValueError):
+            pass
+
+    hint = str(out.get("structure_hint") or "").upper()
+    structure = _normalize_structure(hint)
+    if structure == "Vacant":
+        out["unit_count"] = 0
+        return out
+    if structure == "SFH":
+        out["unit_count"] = 1
+        return out
+
+    inferred = _infer_unit_count(hint, out.get("footprint_area_m2"))
+    if inferred is not None:
+        out["unit_count"] = inferred
+    elif structure == "MDU":
+        out["unit_count"] = 2
+    return out
+
+
 def _normalize_structure(structure_hint: str | None) -> str:
     hint = (structure_hint or "").upper()
+    if hint in {"VACANT", "VACANT LOT", "NO STRUCTURE", "EMPTY LOT"}:
+        return "Vacant"
     if hint == "SFU":
         return "SFH"
     if hint.startswith("MDU"):
@@ -1691,8 +1904,16 @@ def _normalize_structure(structure_hint: str | None) -> str:
 # ---------------------------------------------------------------------------
  
 _RESIDENTIAL_FOOTPRINT_MAX_M2 = 500.0
+_MEDIUM_FOOTPRINT_MAX_M2 = 1200.0
+_LARGE_FOOTPRINT_MAX_M2 = 2500.0
 _COORD_MISMATCH_STATUSES = frozenset({"MISMATCH", "MISMATCH_WARN", "NO_COORDS"})
 _STRICT_FOOTPRINT_MATCH_M = 15.0
+_MATCHED_FOOTPRINT_FALLBACK_M = float(os.getenv("AGENT4_MATCHED_FOOTPRINT_FALLBACK_M", "35"))
+_SFH_MAX_FOOTPRINT_MATCH_M = _MATCHED_FOOTPRINT_FALLBACK_M
+_FOOTPRINT_ADDRESS_MAX_M = float(os.getenv("AGENT4_FOOTPRINT_ADDRESS_MAX_M", "30"))
+_FOOTPRINT_DISTANT_VACANT_M = float(os.getenv("AGENT4_FOOTPRINT_DISTANT_VACANT_M", "45"))
+_DISTANT_LARGE_FOOTPRINT_M2 = float(os.getenv("AGENT4_DISTANT_LARGE_FOOTPRINT_M2", "300"))
+_VALIDATED_PIN_MAX_COORD_DIST_M = float(os.getenv("AGENT4_VALIDATED_PIN_MAX_COORD_DIST_M", "25"))
 _COORD_UNRELIABLE_DISTANCE_M = 30.0
 _COORD_REJECT_ALL_DISTANCE_M = 100.0
 
@@ -1746,6 +1967,250 @@ def _footprint_match_distance_m(enriched: dict[str, Any]) -> float | None:
         return None
 
 
+def _address_marked_vacant(addr: Address | None, a1: Agent1Result | None) -> bool:
+    if a1 is not None:
+        if a1.smarty_vacant is True or a1.melissa_vacant is True:
+            return True
+    if addr is None:
+        return False
+    meta = addr.raw_metadata if isinstance(addr.raw_metadata, dict) else {}
+    av = meta.get("address_validation") if isinstance(meta.get("address_validation"), dict) else {}
+    for key in ("vacant", "dpv_vacant", "smarty_vacant", "melissa_vacant"):
+        value = av.get(key)
+        if value is True or str(value or "").strip().upper() in {"Y", "YES", "TRUE", "1"}:
+            return True
+    return False
+
+
+def _mark_vacant_lot(enriched: dict[str, Any], signal: str, *, confidence_floor: int = 80) -> dict[str, Any]:
+    out = dict(enriched)
+    out["structure_hint"] = "VACANT"
+    out["hint_confidence"] = max(_as_percent(out.get("hint_confidence")), confidence_floor)
+    out["class_source"] = "VACANT_LOT"
+    signals = list(out.get("hint_signals") or [])
+    if signal not in signals:
+        signals.append(signal)
+    out["hint_signals"] = signals
+    out["unit_count"] = 0
+    return out
+
+
+def _parcel_indicates_vacant(a3: dict[str, Any] | None) -> bool:
+    land = str((a3 or {}).get("land_use") or "").upper()
+    if not land.strip():
+        return False
+    vacant_tokens = ("VACANT", "UNIMPROVED", "EMPTY LOT", "NO BUILDING", "VACANT LAND")
+    return any(token in land for token in vacant_tokens)
+
+
+def _address_has_building_evidence(
+    addr: Address | None,
+    a1: Agent1Result | None = None,
+    a2: dict[str, Any] | None = None,
+    a3: dict[str, Any] | None = None,
+) -> bool:
+    """True when assessor/parcel data confirms a structure."""
+    if _validated_pin_indicates_structure(addr, a1, a2):
+        return True
+
+    a3 = a3 or {}
+    try:
+        building_sqft = float(a3.get("building_sqft") or 0)
+    except (TypeError, ValueError):
+        building_sqft = 0.0
+    if building_sqft > 0:
+        return True
+
+    meta = addr.raw_metadata if addr is not None and isinstance(addr.raw_metadata, dict) else {}
+    buildings = meta.get("buildings_address") if isinstance(meta.get("buildings_address"), dict) else {}
+    try:
+        attom_sqft = float(buildings.get("attom_building_sqft") or 0)
+    except (TypeError, ValueError):
+        attom_sqft = 0.0
+    if attom_sqft > 0:
+        return True
+
+    if a1 is not None and (a1.smarty_vacant is True or a1.melissa_vacant is True):
+        return False
+
+    land = str(a3.get("land_use") or "").upper()
+    if land and not _parcel_indicates_vacant(a3):
+        occupied_tokens = (
+            "RESIDENTIAL", "SINGLE", "COMMERCIAL", "MULTI", "SFR", "SFH",
+            "DWELLING", "HOUSE", "APARTMENT", "CONDO", "TOWN",
+        )
+        if any(token in land for token in occupied_tokens):
+            return True
+    return False
+
+
+def _validated_pin_indicates_structure(
+    addr: Address | None,
+    a1: Agent1Result | None = None,
+    a2: dict[str, Any] | None = None,
+) -> bool:
+    """
+    True when coordinate/address validation places a reliable ROOFTOP pin on a structure.
+
+    Used when Microsoft footprints are missing or georeferenced poorly in rural areas.
+    Not used for distant large-footprint neighbor matches (handled separately).
+    """
+    if addr is None or _address_marked_vacant(addr, a1):
+        return False
+    if a1 is not None and str(a1.validation_status or "").upper() == "REJECT":
+        return False
+
+    a2 = a2 or {}
+    meta = addr.raw_metadata if isinstance(addr.raw_metadata, dict) else {}
+    av = meta.get("address_validation") if isinstance(meta.get("address_validation"), dict) else {}
+    context = _coord_validation_context(addr, a2)
+
+    match_status = str(
+        av.get("match_status")
+        or context.get("match_status")
+        or getattr(addr, "coord_address_match_status", None)
+        or ""
+    ).upper()
+    if match_status in {"MISMATCH", "ADDRESS_MISMATCH", "UNVERIFIED", "NO_COORDS", "REJECT"}:
+        return False
+    if match_status not in {"MATCH", "AUTO_ACCEPT"}:
+        return False
+
+    confidence = max(
+        _as_percent(av.get("confidence_score")),
+        _as_percent(a2.get("confidence")),
+        _as_percent(getattr(a1, "confidence_score", None) if a1 else None),
+    )
+    if confidence < 85:
+        return False
+
+    location_type = str(
+        av.get("location_type")
+        or meta.get("reverse_geocode_location_type")
+        or a2.get("location_type")
+        or (a2.get("geocoding") or {}).get("location_type")
+        or ""
+    ).upper()
+    if location_type and location_type not in {
+        "ROOFTOP", "RANGE_INTERPOLATED", "GEOMETRIC_CENTER", "APPROXIMATE",
+    }:
+        return False
+
+    coord_dist = context.get("distance_m")
+    if coord_dist is None:
+        coord_dist = getattr(addr, "coord_address_distance_m", None)
+    try:
+        coord_dist = float(coord_dist) if coord_dist is not None else None
+    except (TypeError, ValueError):
+        coord_dist = None
+    if coord_dist is not None and coord_dist > _VALIDATED_PIN_MAX_COORD_DIST_M:
+        return False
+    return True
+
+
+def _should_mark_distant_footprint_vacant(
+    enriched: dict[str, Any],
+    addr: Address | None = None,
+    a2: dict[str, Any] | None = None,
+) -> bool:
+    """Vacant only for clearly wrong MS matches — not every offset footprint."""
+    del addr, a2
+    fp_dist = _footprint_match_distance_m(enriched)
+    if fp_dist is None or fp_dist <= _FOOTPRINT_ADDRESS_MAX_M:
+        return False
+    if fp_dist > _FOOTPRINT_DISTANT_VACANT_M:
+        return True
+    try:
+        area = float(enriched.get("footprint_area_m2") or 0)
+    except (TypeError, ValueError):
+        area = 0.0
+    return area >= _DISTANT_LARGE_FOOTPRINT_M2
+
+
+def _apply_validated_pin_fallback(enriched: dict[str, Any]) -> dict[str, Any]:
+    out = dict(enriched)
+    out["structure_hint"] = "SFU"
+    out["hint_confidence"] = max(_as_percent(out.get("hint_confidence")), 76)
+    out["class_source"] = "VALIDATED_PIN_FALLBACK"
+    signals = list(out.get("hint_signals") or [])
+    if "validated_pin_building_fallback" not in signals:
+        signals.append("validated_pin_building_fallback")
+    out["hint_signals"] = signals
+    return _ensure_unit_count(out)
+
+
+def _infer_without_footprint(
+    enriched: dict[str, Any],
+    addr: Address | None = None,
+    a1: Agent1Result | None = None,
+    a2: dict[str, Any] | None = None,
+    a3: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Missing Microsoft footprint tiles do not prove a vacant lot.
+
+    Prefer validated-address / parcel evidence for SFH; reserve Vacant for explicit
+    vacant land-use or provider vacant flags handled earlier.
+    """
+    out = dict(enriched)
+    signals = list(out.get("hint_signals") or [])
+    if "no_building_footprint_matched" not in signals:
+        signals.append("no_building_footprint_matched")
+
+    if "distant_footprint_rejected" in signals:
+        return _mark_vacant_lot(out, "distant_footprint_rejected", confidence_floor=85)
+
+    if _parcel_indicates_vacant(a3) and not _address_has_building_evidence(addr, a1, a2, a3):
+        out["hint_signals"] = signals + ["parcel_vacant_land_use"]
+        return _mark_vacant_lot(out, "parcel_vacant_land_use", confidence_floor=82)
+
+    if _address_has_building_evidence(addr, a1, a2, a3):
+        return _apply_validated_pin_fallback(out)
+
+    out.update({
+        "structure_hint": "UNRESOLVED",
+        "hint_confidence": 0,
+        "class_source": out.get("class_source") or "NONE",
+        "hint_signals": signals,
+    })
+    return _ensure_unit_count(out)
+
+
+def _apply_vacant_lot_rules(
+    enriched: dict[str, Any],
+    addr: Address | None = None,
+    a1: Agent1Result | None = None,
+    a2: dict[str, Any] | None = None,
+    a3: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Mark vacant only with explicit vacant provider/parcel evidence — not missing footprints."""
+    out = dict(enriched)
+    if _address_marked_vacant(addr, a1):
+        return _mark_vacant_lot(out, "address_validation_vacant_flag", confidence_floor=88)
+
+    if not out.get("building_matched"):
+        return _infer_without_footprint(out, addr, a1, a2, a3)
+
+    return out
+
+
+def _reject_distant_footprint_match(
+    enriched: dict[str, Any],
+    addr: Address | None = None,
+    a2: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Reject MS footprint matches that are too far to trust for this address pin."""
+    out = dict(enriched)
+    if not out.get("building_matched"):
+        return out
+    fp_dist = _footprint_match_distance_m(out)
+    if fp_dist is None or fp_dist <= _FOOTPRINT_ADDRESS_MAX_M:
+        return out
+    if _should_mark_distant_footprint_vacant(out, addr, a2):
+        return _reject_footprint_match(out, "distant_footprint_rejected")
+    return _reject_footprint_match(out, "distant_footprint_unreliable")
+
+
 def _reject_footprint_match(enriched: dict[str, Any], reason_signal: str) -> dict[str, Any]:
     out = dict(enriched)
     out.update({"building_matched": False, "structure_hint": "UNRESOLVED",
@@ -1765,36 +2230,63 @@ def _apply_coord_mismatch_guard(enriched, addr, a2=None):
     if max_dist is None:
         return enriched
     fp_dist = _footprint_match_distance_m(enriched)
+    if fp_dist is not None and fp_dist <= _MATCHED_FOOTPRINT_FALLBACK_M:
+        try:
+            area = float(enriched.get("footprint_area_m2") or 0)
+        except (TypeError, ValueError):
+            area = 0.0
+        if area > 0:
+            return enriched
     if fp_dist is None or fp_dist > max_dist:
         return _reject_footprint_match(enriched, "coord_mismatch_footprint_rejected")
     return enriched
 
 
 def _matched_footprint_fallback(enriched, addr=None, a2=None):
+    """When a footprint matched but rules/ML stayed UNRESOLVED, infer structure from geometry."""
     out = dict(enriched)
     if not out.get("building_matched"):
         return out
-    if addr is not None and _coords_unreliable(_coord_validation_context(addr, a2)):
-        fp_dist = _footprint_match_distance_m(out)
-        if fp_dist is None or fp_dist > _STRICT_FOOTPRINT_MATCH_M:
-            return out
+
     hint = str(out.get("structure_hint") or "").upper()
     if hint != "UNRESOLVED":
+        return _ensure_unit_count(out)
+
+    fp_dist = _footprint_match_distance_m(out)
+    max_dist = _MATCHED_FOOTPRINT_FALLBACK_M
+    if addr is not None and _coords_unreliable(_coord_validation_context(addr, a2)):
+        max_dist = min(max_dist, _STRICT_FOOTPRINT_MATCH_M)
+    if fp_dist is not None and fp_dist > max_dist:
         return out
+
     try:
         area = float(out.get("footprint_area_m2"))
     except (TypeError, ValueError):
+        area = 0.0
+
+    if area <= 0:
+        structure_hint = "SFU"
+        confidence_floor = 72
+    elif area <= _RESIDENTIAL_FOOTPRINT_MAX_M2:
+        structure_hint = "SFU"
+        confidence_floor = 80
+    elif area <= _MEDIUM_FOOTPRINT_MAX_M2:
+        structure_hint = "MDU_SMALL"
+        confidence_floor = 76
+    elif area <= _LARGE_FOOTPRINT_MAX_M2:
+        structure_hint = "MDU_LARGE"
+        confidence_floor = 72
+    else:
         return out
-    if area <= 0 or area > _RESIDENTIAL_FOOTPRINT_MAX_M2:
-        return out
-    out["structure_hint"] = "SFU"
-    out["hint_confidence"] = max(_as_percent(out.get("hint_confidence")), 80)
+
+    out["structure_hint"] = structure_hint
+    out["hint_confidence"] = max(_as_percent(out.get("hint_confidence")), confidence_floor)
     out["class_source"] = "FOOTPRINT_FALLBACK"
     signals = list(out.get("hint_signals") or [])
     if "matched_residential_footprint_fallback" not in signals:
         signals.append("matched_residential_footprint_fallback")
     out["hint_signals"] = signals
-    return out
+    return _ensure_unit_count(out)
 
 
 def _address_validation_score(addr, a2=None) -> int | None:
@@ -1814,10 +2306,12 @@ def _address_validation_score(addr, a2=None) -> int | None:
 
 def _calibrate_agent4_confidence(enriched, addr, a2=None):
     out = dict(enriched)
+    if str(_normalize_structure(out.get("structure_hint"))) == "Vacant":
+        return out
     if not out.get("building_matched"):
         return out
     hint = str(out.get("structure_hint") or "").upper()
-    if hint not in ("SFU", "SFH"):
+    if hint not in ("SFU", "SFH", "MDU_SMALL", "MDU_LARGE"):
         return out
     current = _as_percent(out.get("hint_confidence"))
     floor = current
@@ -1825,6 +2319,8 @@ def _calibrate_agent4_confidence(enriched, addr, a2=None):
     status = str(context.get("match_status") or "").upper()
     coord_dist = context.get("distance_m")
     fp_dist = _footprint_match_distance_m(out)
+    if fp_dist is not None and fp_dist > _FOOTPRINT_ADDRESS_MAX_M:
+        return out
     if status == "MATCH":
         floor = max(floor, 92 if (coord_dist or 999) <= 5 else 88 if (coord_dist or 999) <= 15 else 85)
     val_score = _address_validation_score(addr, a2)
@@ -1870,15 +2366,20 @@ def _record_for_reference(addr, a1, a2=None, a3=None):
     return _record_from_db_metadata(addr, a1, a2, a3)
  
  
-def _to_agent4_payload_from_ms(enriched, addr, a1, a2=None):
+def _to_agent4_payload_from_ms(enriched, addr, a1, a2=None, a3=None):
     """Convert a Microsoft-footprint enriched row to the standard Agent 4 payload."""
+    enriched = _reject_distant_footprint_match(enriched, addr, a2)
     enriched = _apply_coord_mismatch_guard(enriched, addr, a2)
     enriched = _matched_footprint_fallback(enriched, addr, a2)
+    enriched = _apply_vacant_lot_rules(enriched, addr, a1, a2, a3)
     enriched = _calibrate_agent4_confidence(enriched, addr, a2)
+    enriched = _ensure_unit_count(enriched)
     structure_hint = enriched.get("structure_hint") or "UNRESOLVED"
     structure_type = _normalize_structure(structure_hint)
     payload = {
-        "status": "classified" if enriched.get("building_matched") else "unmatched",
+        "status": "classified" if structure_type not in {"Unknown", "UNRESOLVED", "Vacant"} else (
+            "vacant" if structure_type == "Vacant" else "unmatched"
+        ),
         "structure_type": structure_type,
         "is_mdu": structure_type == "MDU",
         "confidence": _as_percent(enriched.get("hint_confidence")),
@@ -1905,9 +2406,9 @@ def _to_agent4_payload_from_ms(enriched, addr, a1, a2=None):
     return payload
 
 
-def _to_agent4_payload(enriched, addr, a1, a2=None):
+def _to_agent4_payload(enriched, addr, a1, a2=None, a3=None):
     """Legacy compatibility wrapper for the Microsoft-footprint payload path."""
-    return _to_agent4_payload_from_ms(enriched, addr, a1, a2)
+    return _to_agent4_payload_from_ms(enriched, addr, a1, a2, a3)
  
  
 # ---------------------------------------------------------------------------
@@ -1946,6 +2447,7 @@ def _ensure_table(session) -> None:
         {"field": "structure_type", "value": "SFH", "color": "#22c55e", "label": "SFH"},
         {"field": "structure_type", "value": "MDU", "color": "#3b82f6", "label": "MDU"},
         {"field": "structure_type", "value": "Commercial", "color": "#f59e0b", "label": "Commercial"},
+        {"field": "structure_type", "value": "Vacant", "color": "#9ca3af", "label": "Vacant Lot"},
         {"field": "building_matched", "value": True, "color": "#14b8a6", "label": "Footprint matched"},
         {"field": "source_agent", "value": "attom_data_api", "color": "#8b5cf6", "label": "ATTOM primary"},
         {"field": "source_agent", "value": "microsoft_footprint_fallback", "color": "#6b7280", "label": "MS fallback"},
@@ -2233,6 +2735,7 @@ def run_agent4_for_job(
                                 "hint_confidence": 0.0,
                                 "class_source": "NONE",
                                 "matched_radius_m": None,
+                                "hint_signals": ["no_building_footprint_matched"],
                             }
                             for rec in ms_needed_recs
                         ]
@@ -2257,6 +2760,7 @@ def run_agent4_for_job(
                             addr,
                             a1_map.get(addr_id),
                             a2_map.get(addr_id),
+                            a3_map.get(addr_id),
                         )
                         _upsert(session, job_id, addr_id, payload)
                         _persist_buildings_address(addr, enriched, payload, input_source="database")

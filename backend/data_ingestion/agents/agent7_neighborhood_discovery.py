@@ -33,6 +33,7 @@ from data_ingestion.database.models import (
     UploadedSourceRecord,
 )
 from data_ingestion.utils.agent_logging import configure_agent_logger
+from data_ingestion.utils.discovery_source import build_new_address_discovery_metadata
 from data_ingestion.utils.strings import normalize_address_key
 
 try:
@@ -226,7 +227,6 @@ def _create_address_from_discovery(
         "original_source_file": polygon_row.source_file or seed_row.source_file,
         "merge_status": "new",
         "merge_color": "yellow",
-        "merge_reason": "New address record discovered by Agent 7 inside polygon",
         "rule_status": "new",
         "rule_color": "yellow",
         "final_resolution": final,
@@ -243,6 +243,14 @@ def _create_address_from_discovery(
         "_uploaded_data": {},
         "_uploaded_columns": [],
     }
+    meta.update(
+        build_new_address_discovery_metadata(
+            agent="agent7",
+            provider=provider,
+            location_type=location_type,
+            base_reason="New address record discovered by Agent 7 inside polygon",
+        )
+    )
     row = Address(
         job_id=job_id,
         customer_id=seed_row.customer_id,

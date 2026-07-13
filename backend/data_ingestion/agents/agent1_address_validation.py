@@ -24,8 +24,10 @@ import logging
 import threading
 import math
 import re
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+from data_ingestion.utils.address_match import extract_house_number as _leading_house_number
 
 _PROJECT_ROOT = PROJECT_ROOT
 
@@ -216,6 +218,9 @@ def _status_from_score(score: int | float | None) -> str:
 def _first_house_number(text: str | None) -> str | None:
     if not text:
         return None
+    leading = _leading_house_number(str(text))
+    if leading:
+        return leading
     match = re.search(r"\b\d+[A-Z]?\b", str(text).upper())
     return match.group(0) if match else None
 

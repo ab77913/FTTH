@@ -15,10 +15,14 @@ from data_ingestion.utils.res_com_addressing import (
 )
 
 _ZIP_RE = re.compile(r"\b(\d{5})(?:-\d{4})?\b")
-_HOUSE_RE = re.compile(r"^\s*(\d+(?:-\d+)?[A-Za-z]?)\b")
+_HOUSE_ATTACHED_SUFFIX_RE = re.compile(r"^\s*(\d+(?:-\d+)?[A-Za-z])\b")
+_HOUSE_SPACED_UNIT_RE = re.compile(r"^\s*(\d+(?:-\d+)?)\s+([A-Za-z])\b")
+_HOUSE_PLAIN_RE = re.compile(r"^\s*(\d+(?:-\d+)?)\b")
 _HOUSE_FALLBACK_RE = re.compile(r"\b(\d+(?:-\d+)?[A-Za-z]?)\b")
 _STATE_RE = re.compile(r"\b([A-Z]{2})\b")
 _ORDINAL_SUFFIX_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b", re.I)
+# Single-letter tokens after the house number that are street directions, not unit suffixes.
+_COMPASS_UNIT_LETTERS = frozenset("NSEW")
 
 # Fuzzy token-set ratio at or above this → treat as 100% text match (env-tunable).
 _FUZZY_MATCH_THRESHOLD = int(os.environ.get("FTTH_ADDRESS_MATCH_FUZZY_THRESHOLD", "92"))
@@ -46,15 +50,28 @@ def _extract_zip(text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _extract_house_number(text: str) -> str | None:
-    """Leading house/building number, including hyphenated forms (e.g. 49-5, 4905)."""
+def extract_house_number(text: str) -> str | None:
+    """Leading house/building number, including unit suffixes (278A, 278 A, 49-5)."""
     if not text:
         return None
-    m = _HOUSE_RE.match(text.strip())
+    stripped = text.strip()
+    m = _HOUSE_ATTACHED_SUFFIX_RE.match(stripped)
     if m:
         return m.group(1).upper()
-    m = _HOUSE_FALLBACK_RE.search(text)
+    m = _HOUSE_SPACED_UNIT_RE.match(stripped)
+    if m:
+        suffix = m.group(2).upper()
+        if suffix not in _COMPASS_UNIT_LETTERS:
+            return f"{m.group(1).upper()}{suffix}"
+    m = _HOUSE_PLAIN_RE.match(stripped)
+    if m:
+        return m.group(1).upper()
+    m = _HOUSE_FALLBACK_RE.search(stripped)
     return m.group(1).upper() if m else None
+
+
+def _extract_house_number(text: str) -> str | None:
+    return extract_house_number(text)
 
 
 def _normalize_house_number(value: str | None) -> str:
@@ -111,9 +128,12 @@ def looks_like_street_address(text: str | None) -> bool:
     if not text or not str(text).strip():
         return False
     t = str(text).strip()
-    m = re.match(r"^(\d+(?:-\d+)?[A-Za-z]?)\s+(\S+(?:\s+\S+)*)", t)
-    if m and len(m.group(2).split()) >= 1:
-        return True
+    if extract_house_number(t):
+        remainder = _HOUSE_ATTACHED_SUFFIX_RE.sub("", t, count=1)
+        remainder = _HOUSE_SPACED_UNIT_RE.sub("", remainder, count=1)
+        remainder = _HOUSE_PLAIN_RE.sub("", remainder, count=1).strip()
+        if remainder and len(remainder.split()) >= 1:
+            return True
     tokens = _normalize_match_text(t).split()
     return len(tokens) >= 2
 

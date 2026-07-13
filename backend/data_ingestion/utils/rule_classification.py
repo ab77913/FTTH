@@ -7,6 +7,9 @@ MISSING_ADDRESS_REASON = "Address data not given in CSV"
 INTERPOLATED_FORWARD_CONFLICT_REASON = (
     "Address not found: forward geocode is range-interpolated and conflicts with reverse-at-pin house number"
 )
+COORD_ADDRESS_MISMATCH_REASON = (
+    "Address mismatch: uploaded address does not match address at supplied coordinates"
+)
 
 _MISSING_ADDRESS_MARKERS = (
     "ADDRESS DATA NOT GIVEN IN CSV",
@@ -80,6 +83,30 @@ def _int_value(value: Any, default: int = 0) -> int:
         return default
 
 
+def _coord_match_status(meta: dict[str, Any] | None, coord_status: Any = None) -> str:
+    meta = meta or {}
+    av = meta.get("address_validation") if isinstance(meta.get("address_validation"), dict) else {}
+    return _normalize_token(av.get("match_status") or meta.get("coord_address_match_status") or coord_status)
+
+
+def is_coord_address_mismatch(meta: dict[str, Any] | None, coord_status: Any = None) -> bool:
+    """True when reverse-at-pin validation disagrees with the uploaded address."""
+    return _coord_match_status(meta, coord_status) == "ADDRESS_MISMATCH"
+
+
+def coord_address_mismatch_reason(meta: dict[str, Any] | None) -> str:
+    meta = meta or {}
+    av = meta.get("address_validation") if isinstance(meta.get("address_validation"), dict) else {}
+    for candidate in (
+        av.get("notes"),
+        meta.get("coord_address_validation_notes"),
+        meta.get("merge_reason"),
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return COORD_ADDRESS_MISMATCH_REASON
+
+
 def is_interpolated_forward_reverse_conflict(meta: dict[str, Any] | None) -> bool:
     """True when a green match only came from an interpolated forward geocode."""
     meta = meta or {}
@@ -117,8 +144,9 @@ def address_found_from_raw_metadata(meta: dict[str, Any] | None) -> bool:
     meta = meta or {}
     if is_interpolated_forward_reverse_conflict(meta):
         return False
-    av = meta.get("address_validation") if isinstance(meta.get("address_validation"), dict) else {}
-    match_status = _normalize_token(av.get("match_status") or meta.get("coord_address_match_status"))
+    if is_coord_address_mismatch(meta):
+        return False
+    match_status = _coord_match_status(meta)
     if match_status == "MATCH":
         return True
 
@@ -178,6 +206,12 @@ def rule_status_from_raw_metadata(
             "invalid",
             "red",
             INTERPOLATED_FORWARD_CONFLICT_REASON,
+        )
+    if is_coord_address_mismatch(meta):
+        return (
+            "invalid",
+            "red",
+            coord_address_mismatch_reason(meta),
         )
     if stored == "new":
         # KMZ input addresses are never "new" — they came from the geospatial input file

@@ -261,6 +261,43 @@ def test_different_house_number_stays_low() -> None:
     assert address_match_percent(upload, reverse, city="REDDICK", state="FL") <= 40
 
 
+def test_spaced_unit_suffix_does_not_match_base_house_number() -> None:
+    """278 A must not validate as 278 when Google drops the unit letter."""
+    upload = "278 A RIVER RD"
+    google = "278 River Rd, Underhill Center, VT 05490, USA"
+    kwargs = {"city": "UNDERHILL", "state": "VT", "zip_code": "5489", "coord_distance_m": 0.0}
+    assert address_match_percent(upload, google, **kwargs) <= 40
+    assert not address_matches_exact(upload, google, **kwargs)
+
+
+def test_spaced_unit_suffix_matches_when_geocoder_keeps_unit() -> None:
+    upload = "63A Range Rd"
+    google = "63A Range Rd, Underhill, VT 05489, USA"
+    kwargs = {"city": "UNDERHILL", "state": "VT", "zip_code": "5489"}
+    assert address_match_percent(upload, google, **kwargs) == 100
+
+
+def test_spaced_unit_suffix_extracts_as_attached_form() -> None:
+    from data_ingestion.utils.address_match import extract_house_number
+
+    assert extract_house_number("278 A RIVER RD") == "278A"
+    assert extract_house_number("278A RIVER RD") == "278A"
+    assert extract_house_number("278 RIVER RD") == "278"
+    assert extract_house_number("278 N RIVER RD") == "278"
+
+
+def test_rooftop_house_number_match_rejects_spaced_unit_mismatch() -> None:
+    from data_ingestion.agents.agent2_geocoding import _rooftop_house_number_match
+
+    result = {
+        "location_type": "ROOFTOP",
+        "formatted_address": "278 River Rd, Underhill Center, VT 05490, USA",
+        "house_number": "278",
+    }
+    assert not _rooftop_house_number_match("278 A RIVER RD", result)
+    assert _rooftop_house_number_match("278 RIVER RD", result)
+
+
 def test_hyphenated_house_number_mismatch() -> None:
     upload = "4905 NW 152ND LN"
     reverse_geo = {

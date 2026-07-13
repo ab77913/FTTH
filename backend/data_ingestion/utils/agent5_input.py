@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from data_ingestion.database.models import Address, Agent1Result
+from data_ingestion.utils.address_match import extract_house_number as _leading_house_number
 from data_ingestion.utils.res_com_addressing import resolve_best_address
-
-_HOUSE_NUM_RE = re.compile(r"^(\d+[A-Za-z]?)\s+")
 
 
 def _coords_valid(lat: Any, lon: Any) -> bool:
@@ -85,10 +83,7 @@ def resolve_agent5_coordinates(
 
 
 def extract_house_number(raw_address: str | None) -> str:
-    if not raw_address:
-        return ""
-    match = _HOUSE_NUM_RE.match(raw_address.strip())
-    return match.group(1) if match else ""
+    return _leading_house_number(raw_address or "") or ""
 
 
 def _address_type_from_metadata(raw_metadata: dict | None) -> str:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from data_ingestion.utils.rule_classification import (
     address_found_from_raw_metadata,
+    coord_address_mismatch_reason,
+    is_coord_address_mismatch,
     is_interpolated_forward_reverse_conflict,
     is_missing_address_record,
     is_sticky_duplicate,
@@ -119,3 +121,25 @@ def test_interpolated_forward_reverse_conflict_is_invalid_not_found() -> None:
     assert status == "invalid"
     assert color == "red"
     assert "range-interpolated" in reason
+
+
+def test_coord_address_mismatch_is_invalid_even_when_forward_geocode_matches() -> None:
+    meta = {
+        "merge_status": "verified",
+        "merge_color": "green",
+        "address_validation": {
+            "match_status": "ADDRESS_MISMATCH",
+            "notes": (
+                "Uploaded address house number 65 does not match the address at the "
+                "supplied coordinates (64). Reverse at pin: 64 Stevensville Rd, Underhill, VT 05489, USA"
+            ),
+        },
+    }
+
+    assert is_coord_address_mismatch(meta) is True
+    assert address_found_from_raw_metadata(meta) is False
+    status, color, reason = rule_status_from_raw_metadata(meta)
+    assert status == "invalid"
+    assert color == "red"
+    assert "house number 65" in coord_address_mismatch_reason(meta)
+    assert "house number 65" in reason

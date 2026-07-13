@@ -499,7 +499,7 @@ function MapPage({ jobId, navigate }) {
       return { key: 'duplicate', label: 'Duplicate Address', color: '#ffffff', desc: 'Duplicate address' };
     }
     if (status === 'new') {
-      return { key: 'new', label: 'New Address', color: '#9C6500', desc: 'New address identified but not present in original CSV/Excel' };
+      return { key: 'new', label: 'New Address', color: '#9C6500', desc: 'New address identified but not present in original CSV/Excel; discovery source shows agent, provider, and location type (e.g. ROOFTOP)' };
     }
     if (status === 'valid') {
       return { key: 'verified', label: 'Address Found', color: '#006100', desc: 'Rule engine output returned valid' };

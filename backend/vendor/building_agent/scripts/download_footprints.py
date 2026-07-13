@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -120,14 +121,53 @@ def _fetch_dataset_links() -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(response.content))
 
 
-def _filter_us_rows(df: pd.DataFrame) -> pd.DataFrame:
+def _filter_location_rows(df: pd.DataFrame, location_pattern: str) -> pd.DataFrame:
+    """Keep dataset-links rows whose Location matches ``location_pattern``."""
     mask = df["Location"].astype(str).str.contains(
-        r"United\s*States|UnitedStates",
+        location_pattern,
         case=False,
         na=False,
         regex=True,
     )
     return df[mask].copy()
+
+
+def _filter_us_rows(df: pd.DataFrame) -> pd.DataFrame:
+    return _filter_location_rows(df, r"United\s*States|UnitedStates")
+
+
+def _filter_canada_rows(df: pd.DataFrame) -> pd.DataFrame:
+    return _filter_location_rows(df, r"Canada")
+
+
+def _normalize_location_label(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "Unknown"
+    compact = re.sub(r"[^A-Za-z0-9]+", "", text)
+    return compact or "Unknown"
+
+
+def _infer_ms_region(lat: float, lon: float) -> str:
+    """
+    Best-effort Microsoft global-buildings RegionName for a point.
+
+    Border quadkeys (e.g. Niagara / Buffalo) appear under both Canada and
+    UnitedStates with different tile contents, so callers should still try
+    sibling regions when the preferred tile has no footprints in the job bbox.
+    """
+    # North of the 49th parallel → Canada (Alaska handled separately below).
+    if lat > 49.0 and -141.0 <= lon <= -52.0:
+        return "Canada"
+    # Southern Ontario peninsula (Niagara → Windsor), west of the Niagara River.
+    if 42.85 <= lat <= 49.0 and -85.0 <= lon <= -79.06:
+        return "Canada"
+    # Contiguous US / Alaska / Hawaii envelope.
+    if 24.0 <= lat <= 71.5 and -179.0 <= lon <= -66.0:
+        return "UnitedStates"
+    if lat > 41.0 and -141.0 <= lon <= -52.0:
+        return "Canada"
+    return "UnitedStates"
 
 
 def lat_lon_to_quadkey(lat: float, lon: float, level: int) -> str:

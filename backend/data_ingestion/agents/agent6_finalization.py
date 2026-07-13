@@ -83,6 +83,20 @@ def _majority_vote(types: list[str]) -> str:
     return max(counts, key=lambda k: counts[k])
 
 
+def _address_is_vacant_flagged(addr: Address | None, a1: Agent1Result | None) -> bool:
+    if a1 is not None and (a1.smarty_vacant is True or a1.melissa_vacant is True):
+        return True
+    if addr is None:
+        return False
+    meta = addr.raw_metadata if isinstance(addr.raw_metadata, dict) else {}
+    av = meta.get("address_validation") if isinstance(meta.get("address_validation"), dict) else {}
+    for key in ("vacant", "dpv_vacant", "smarty_vacant", "melissa_vacant"):
+        value = av.get(key)
+        if value is True or str(value or "").strip().upper() in {"Y", "YES", "TRUE", "1"}:
+            return True
+    return False
+
+
 def _normalize_structure_type(value: Any) -> str:
     """Map detailed vision labels and legacy agent labels to A6 categories."""
     raw = str(value or "").strip()
@@ -106,8 +120,12 @@ def _normalize_structure_type(value: Any) -> str:
         "commercial": "Commercial",
         "industrial": "Commercial",
         "mixed_use": "Commercial",
+        "vacant": "Vacant",
+        "vacant_lot": "Vacant",
+        "empty_lot": "Vacant",
+        "no_structure": "Vacant",
     }
-    return mapping.get(key, raw if raw in {"SFH", "MDU", "Commercial"} else "Unknown")
+    return mapping.get(key, raw if raw in {"SFH", "MDU", "Commercial", "Vacant"} else "Unknown")
 
 
 def _a5_structure(a5: dict | None) -> str:
@@ -146,6 +164,25 @@ def _synthesize(
             "a1_status": a1_status,
         }
 
+    if _address_is_vacant_flagged(addr, a1):
+        return {
+            "status": "classified",
+            "final_structure_type": "Vacant",
+            "final_is_mdu": False,
+            "final_unit_count": 0,
+            "final_confidence": max(80, int(a1_score)),
+            "ftth_priority": "SKIP",
+            "validation_summary": (
+                f"Agent1: {a1_status} (score={a1_score}). "
+                "Structure: Vacant (address validation vacant flag)."
+            ),
+            "a1_status": a1_status,
+            "a1_score": a1_score,
+            "vote_pool": ["Vacant"],
+            "a2_geocoded": bool((a2 or {}).get("status") == "geocoded"),
+            "a2_location_type": (a2 or {}).get("location_type", ""),
+        }
+
     # ── Collect structure-type votes from Agents 4 & 5 ──────────────────────
     a4_type = _normalize_structure_type((a4 or {}).get("structure_type"))
     a5_type = _a5_structure(a5)
@@ -155,21 +192,25 @@ def _synthesize(
     if a5_type and a5_type != "Unknown":
         votes.append(a5_type)
 
-    # Land-use from Agent 3 as tiebreaker
+    # Land-use from Agent 3 as tiebreaker — do not override occupied A4/A5 evidence.
     a3_land = (a3 or {}).get("land_use", "")
-    if "multi" in a3_land.lower() or "apartment" in a3_land.lower():
+    occupied_types = {t for t in (a4_type, a5_type) if t in {"SFH", "MDU", "Commercial"}}
+    if "vacant" in a3_land.lower():
+        if not occupied_types:
+            votes.append("Vacant")
+    elif "multi" in a3_land.lower() or "apartment" in a3_land.lower():
         votes.append("MDU")
     elif "single" in a3_land.lower() or "sfh" in a3_land.lower():
         votes.append("SFH")
     elif "commercial" in a3_land.lower():
         votes.append("Commercial")
 
-    structure_type = _majority_vote(votes) if votes else "SFH"
+    structure_type = _majority_vote(votes) if votes else "Unknown"
 
     # ── Unit count ───────────────────────────────────────────────────────────
     units_min = (a5 or {}).get("visible_units_min", 1) or 1
     units_max = (a5 or {}).get("visible_units_max", 1) or 1
-    unit_count = max(units_min, units_max)
+    unit_count = 0 if structure_type == "Vacant" else max(units_min, units_max)
 
     is_mdu = structure_type == "MDU"
 
@@ -200,7 +241,9 @@ def _synthesize(
         final_confidence = max(final_confidence, 90)
 
     # ── FTTH priority ─────────────────────────────────────────────────────────
-    if final_type == "Commercial":
+    if final_type == "Vacant":
+        priority = "SKIP"
+    elif final_type == "Commercial":
         priority = "LOW"
     elif final_type == "MDU_LARGE":
         priority = "HIGH"
@@ -230,7 +273,7 @@ def _synthesize(
         "status": "classified",
         "final_structure_type": final_type,
         "final_is_mdu": is_mdu,
-        "final_unit_count": unit_count if is_mdu else 1,
+        "final_unit_count": unit_count if (is_mdu or final_type == "Vacant") else 1,
         "final_confidence": final_confidence,
         "ftth_priority": priority,
         "validation_summary": " | ".join(summary_parts),

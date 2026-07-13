@@ -31,6 +31,7 @@ from data_ingestion.database.models import (
     AgentResult,
     AgentTable,
 )
+from data_ingestion.utils.discovery_source import build_new_address_discovery_metadata
 from data_ingestion.utils.agent_logging import configure_agent_logger, log_api_call, log_payload
 from data_ingestion.utils.strings import normalize_address_key
 
@@ -687,10 +688,17 @@ def _create_address_from_geocode(
         "merge_status": "new",
         "merge_color": "yellow",
         "rule_status": "new",
-        "merge_reason": "New address discovered by Agent 0 inside polygon",
         "source_format": "agent0",
         "original_source_file": polygon_row.source_file,
     }
+    meta.update(
+        build_new_address_discovery_metadata(
+            agent="agent0",
+            provider=str(geocode.get("provider") or "google_reverse_geocode"),
+            location_type=str(geocode.get("location_type") or ""),
+            base_reason="New address discovered by Agent 0 inside polygon",
+        )
+    )
     if extra_metadata:
         meta.update(extra_metadata)
     row = Address(
@@ -1094,6 +1102,8 @@ def run_agent0_for_job(
                     "polygon_address_id": polygon_row.id,
                     "discovery_result_id": discovery.id,
                     "source": geocode.get("provider") or "google_reverse_geocode",
+                    "location_type": geocode.get("location_type") or "",
+                    "geocode": {k: v for k, v in geocode.items() if k != "raw"},
                 }
                 _upsert_agent_result(session, job_id=job_id, address_id=address_row.id, data=data)
                 if key:

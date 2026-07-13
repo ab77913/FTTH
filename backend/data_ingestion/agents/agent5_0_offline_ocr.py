@@ -734,6 +734,7 @@ def analyze_record(record: dict[str, Any], *, config: Agent50Config | None = Non
                         "paddle_runs": paddle_runs,
                         "iterations_used": iteration + 1,
                         "streetview_heading": base_heading,
+                        "streetview_metadata": sv_meta if isinstance(sv_meta, dict) else {},
                         "search_trace": trace,
                         "latency_ms": int((time.monotonic() - started) * 1000),
                     }
@@ -786,6 +787,7 @@ def analyze_record(record: dict[str, Any], *, config: Agent50Config | None = Non
                     "paddle_runs": paddle_runs,
                     "iterations_used": iteration + 1,
                     "streetview_heading": base_heading,
+                    "streetview_metadata": sv_meta if isinstance(sv_meta, dict) else {},
                     "search_trace": trace,
                     "latency_ms": int((time.monotonic() - started) * 1000),
                 }
@@ -851,6 +853,7 @@ def analyze_record(record: dict[str, Any], *, config: Agent50Config | None = Non
         "paddle_runs": paddle_runs,
         "iterations_used": config.max_iterations,
         "streetview_heading": base_heading,
+        "streetview_metadata": sv_meta if isinstance(sv_meta, dict) else {},
         "search_trace": trace,
         "latency_ms": int((time.monotonic() - started) * 1000),
     }
@@ -873,6 +876,21 @@ def _ensure_table(session) -> None:
     session.commit()
 
 
+def _persist_streetview_api_on_address(session, address_id: int, data: dict[str, Any]) -> None:
+    sv_meta = data.get("streetview_metadata")
+    if not isinstance(sv_meta, dict) or not sv_meta:
+        return
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from data_ingestion.utils.agent_api_key_status import persist_streetview_api_summary
+
+    addr = session.get(Address, address_id)
+    if not addr:
+        return
+    addr.raw_metadata = persist_streetview_api_summary(dict(addr.raw_metadata or {}), sv_meta)
+    flag_modified(addr, "raw_metadata")
+
+
 def _upsert(session, job_id: str, address_id: int, data: dict[str, Any]) -> None:
     from sqlalchemy.dialects.postgresql import insert as _pg_insert
 
@@ -889,6 +907,7 @@ def _upsert(session, job_id: str, address_id: int, data: dict[str, Any]) -> None
         set_={"data": data, "updated_at": now, "job_id": job_id},
     )
     session.execute(stmt)
+    _persist_streetview_api_on_address(session, address_id, data)
 
 
 def _summary(total: int = 0) -> dict[str, Any]:

@@ -121,6 +121,35 @@ def test_interpolated_forward_conflict_exports_as_invalid_red() -> None:
     assert rule["rule_color"] == "red"
 
 
+def test_coord_address_mismatch_exports_as_invalid_red() -> None:
+    meta = {
+        "merge_status": "verified",
+        "merge_color": "green",
+        "rule_status": "valid",
+        "rule_color": "green",
+        "merge_reason": "Address found by exact geocoder match; supplied coordinates appear incorrect (GOOGLE ROOFTOP)",
+        "address_validation": {
+            "match_status": "ADDRESS_MISMATCH",
+            "notes": (
+                "Uploaded address house number 65 does not match the address at the "
+                "supplied coordinates (64). Reverse at pin: 64 Stevensville Rd, Underhill, VT 05489, USA"
+            ),
+        },
+    }
+
+    merge = _normalized_merge_fields(meta)
+    rule = _rule_export_fields(meta)
+    map_fields = _rule_map_export_fields(rule)
+
+    assert merge["merge_status"] == "invalid"
+    assert merge["merge_color"] == "red"
+    assert "house number 65" in merge["merge_reason"]
+    assert rule["rule_status"] == "invalid"
+    assert rule["rule_color"] == "red"
+    assert map_fields["map_color_hex"] == "#C00000"
+    assert map_fields["map_color_label"] == "Address Not Found"
+
+
 def test_invalid_exports_to_address_not_found_map_label() -> None:
     meta = {"merge_status": "invalid", "merge_color": "red"}
     merge = _normalized_merge_fields(meta)

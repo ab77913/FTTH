@@ -17,6 +17,17 @@ function googleMapsCoordUrl(lat, lon) {
   return `https://www.google.com/maps?q=${encodeURIComponent(`${Number(lat)},${Number(lon)}`)}`;
 }
 
+const DEMO_VIEW_STORAGE_KEY = 'ftth_records_demo_view';
+
+function readDemoViewPreference() {
+  try {
+    const stored = localStorage.getItem(DEMO_VIEW_STORAGE_KEY);
+    if (stored === '0') return false;
+    if (stored === '1') return true;
+  } catch (_) {}
+  return true;
+}
+
 function RecordsTable({ jobId, navigate }) {
   const { isDark } = useTheme();
   const [data, setData] = useState(null);
@@ -26,6 +37,7 @@ function RecordsTable({ jobId, navigate }) {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [flowConfig, setFlowConfig] = useState(null);
+  const [demoViewMode, setDemoViewMode] = useState(readDemoViewPreference);
 
   const FLOW_SOURCE_TO_AGENT = {
     agent0: 'agent0_house_discovery',
@@ -42,22 +54,25 @@ function RecordsTable({ jobId, navigate }) {
   const DEMO_COLUMN_ORDER = [
     'id', 'source_file', 'address_source', 'source_row_number',
     'raw_address', 'city', 'state', 'zip_code', 'latitude', 'longitude',
-    'agent0_is_new_address', 'agent0_status', 'agent0_discovered_address',
+    'agent0_is_new_address', 'agent0_status', 'agent0_discovered_address', 'agent0_api_key_status',
+    'new_address_discovery_agent', 'new_address_discovery_provider', 'new_address_discovery_location_type', 'new_address_discovery_source',
     'coord_address_match_status', 'coord_address_distance_m', 'reverse_geocode_confidence_score',
     'validated_raw_address', 'validated_latitude', 'validated_longitude',
-    'agent2_status', 'agent2_formatted_address', 'agent2_latitude', 'agent2_longitude',
+    'agent2_status', 'agent2_api_key_status', 'agent2_formatted_address', 'agent2_latitude', 'agent2_longitude',
     'agent2_location_type', 'agent2_confidence',
-    'agent1_validation_status', 'agent1_confidence_score', 'agent1_chosen_provider',
+    'agent1_validation_status', 'agent1_api_key_status', 'agent1_confidence_score', 'agent1_chosen_provider',
     'agent1_smarty_lat', 'agent1_smarty_lon',
-    'agent3_land_use', 'agent3_county_name',
-    'agent4_latitude', 'agent4_longitude', 'agent4_structure_type', 'agent4_unit_count', 'agent4_confidence', 'agent4_building_provider',
-    'agent50_status', 'agent50_reason', 'agent50_ocr_match_found', 'agent50_confidence',
+    'agent3_land_use', 'agent3_api_key_status', 'agent3_county_name',
+    'agent4_latitude', 'agent4_longitude', 'agent4_api_key_status', 'agent4_structure_type', 'agent4_unit_count', 'agent4_confidence', 'agent4_building_provider',
+    'agent50_status', 'agent50_api_key_status', 'agent50_streetview_api_status', 'agent50_streetview_pano_id', 'agent50_streetview_date',
+    'agent50_reason', 'agent50_ocr_match_found', 'agent50_confidence',
     'agent50_ocr_engine_used', 'agent50_ollama_ocr_text', 'agent50_ollama_ocr_confidence',
     'agent50_paddle_ocr_text',
-    'agent5_latitude', 'agent5_longitude', 'agent5_structure_type', 'agent5_confidence',
+    'agent5_latitude', 'agent5_longitude', 'agent5_api_key_status', 'agent5_streetview_api_status', 'agent5_streetview_pano_id', 'agent5_streetview_date',
+    'agent5_structure_type', 'agent5_confidence',
     'agent5_imagery_source', 'agent5_paddleocr_scan_recognized',
-    'agent6_final_structure_type', 'agent6_final_confidence', 'agent6_ftth_priority',
-    'agent7_new_address_count', 'agent7_new_addresses',
+    'agent6_final_structure_type', 'agent6_api_key_status', 'agent6_final_confidence', 'agent6_ftth_priority',
+    'agent7_new_address_count', 'agent7_api_key_status', 'agent7_new_addresses',
     'final_latitude', 'final_longitude', 'final_address', 'final_confidence', 'final_provider',
     'final_structure_type', 'final_structure_confidence', 'final_new_addresses',
     'ai_address', 'ai_latitude', 'ai_longitude', 'ai_confidence', 'ftth_priority',
@@ -75,7 +90,7 @@ function RecordsTable({ jobId, navigate }) {
     agent5_0: 'Agent 5-0',
     agent5: 'Agent 5',
     agent6: 'Agent 6',
-    agent7: 'Agent 7',
+    discovery: 'Discovery',
     final: 'Final',
     debug: 'Debug',
   };
@@ -126,7 +141,12 @@ function RecordsTable({ jobId, navigate }) {
   }
 
   function isAgentEnabledForSource(source) {
-    if (!source || !source.startsWith('agent')) return true;
+    if (!source || !source.startsWith('agent')) {
+      if (source === 'discovery') {
+        return isAgentEnabledForSource('agent0') || isAgentEnabledForSource('agent7');
+      }
+      return true;
+    }
     const cfg = getFlowAgentConfigBySource(source);
     if (!cfg) return true;
     return !!cfg.enabled;
@@ -217,7 +237,17 @@ function RecordsTable({ jobId, navigate }) {
     .map((key) => flowVisibleColumns.find((c) => c.key === key))
     .filter(Boolean);
 
-  const finalColumns = demoColumns.length ? demoColumns : addressColumns;
+  const finalColumns = demoViewMode
+    ? (demoColumns.length ? demoColumns : flowVisibleColumns)
+    : flowVisibleColumns;
+
+  function toggleDemoViewMode() {
+    setDemoViewMode((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(DEMO_VIEW_STORAGE_KEY, next ? '1' : '0'); } catch (_) {}
+      return next;
+    });
+  }
 
   const addressCountLabel = `${data.total} ${data.total === 1 ? 'address' : 'addresses'}`;
 
@@ -228,7 +258,7 @@ function RecordsTable({ jobId, navigate }) {
     if (col.source === 'raw' || rawCoreKeys.has(col.key)) {
       return record[col.key] ?? record.raw_data?.[col.key] ?? '';
     }
-    const agentSources = new Set(['raw','agent0','agent1','agent2','agent3','agent4','agent5_0','agent5','agent6','agent7','final','debug']);
+    const agentSources = new Set(['raw','agent0','agent1','agent2','agent3','agent4','agent5_0','agent5','agent6','agent7','discovery','final','debug']);
     if (agentSources.has(col.source) && record.raw_data)
       return record.raw_data[col.key] ?? record[col.key] ?? '';
     if (col.key === 'ADDRESS' || col.key.startsWith('validated_') || col.key.startsWith('coord_address_')
@@ -327,6 +357,10 @@ function RecordsTable({ jobId, navigate }) {
     if (val === 'MDU_SMALL') return t.info;
     if (val === 'MDU_LARGE') return t.indigo;
     if (val === 'Commercial') return t.warning;
+    if (val === 'Working') return t.success;
+    if (val === 'Not Working') return t.danger;
+    if (val === 'Missing Key') return t.warning;
+    if (val === 'N/A') return t.muted;
     return {};
   }
 
@@ -342,6 +376,15 @@ function RecordsTable({ jobId, navigate }) {
             className="flex items-center gap-1 text-xs bg-slate-100 dark:bg-dark-700 hover:bg-slate-200 dark:hover:bg-dark-600 border border-slate-300 dark:border-dark-600 px-3 py-1.5 rounded font-medium text-slate-700 dark:text-gray-300"
             title="Reload records">
             <Icon name="refresh" size={13} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+          <button onClick={toggleDemoViewMode}
+            className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded font-medium border ${
+              demoViewMode
+                ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600'
+                : 'bg-slate-100 dark:bg-dark-700 hover:bg-slate-200 dark:hover:bg-dark-600 border-slate-300 dark:border-dark-600 text-slate-700 dark:text-gray-300'
+            }`}
+            title={demoViewMode ? 'Switch to full column view' : 'Switch to demo column view'}>
+            {demoViewMode ? 'Demo View' : 'Full View'}
           </button>
           {hasGeo && navigate && (
             <button onClick={() => navigate(`/projects/${jobId}/map`)}
@@ -423,7 +466,8 @@ function RecordsTable({ jobId, navigate }) {
                     'agent6_final_structure_type','agent6_ftth_priority',
                     'coord_address_match_status', 'ADDRESS',
                   ]);
-                  const isStatus = _BADGE_KEYS.has(col.key);
+                  const isApiKeyStatus = (col.key || '').endsWith('_api_key_status');
+                  const isStatus = _BADGE_KEYS.has(col.key) || isApiKeyStatus;
                   const agentBg = {
                     agent0:'#062c35', agent1:'#052e16', agent2:'#0c1a2e', agent3:'#180c2e',
                     agent4:'#2e0c1a', agent5_0:'#2f2608', agent5:'#0c2e1a', agent6:'#2e1e0c', agent7:'#083344', final:'#08333a',

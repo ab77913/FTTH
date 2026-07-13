@@ -125,6 +125,32 @@ class TestRejectPath:
 # 3. SFH classification
 # ══════════════════════════════════════════════════════════════════════════════
 
+class TestVacantClassification:
+    def test_agent4_vacant_vote_skips_ftth(self):
+        result = _synthesize(
+            addr=_make_addr(),
+            a1=_make_a1("AUTO_ACCEPT", 90),
+            a2=_a2(), a3=_a3("Vacant Land"),
+            a4={"structure_type": "Vacant", "confidence": 85},
+            a5=None,
+        )
+        assert result["final_structure_type"] == "Vacant"
+        assert result["ftth_priority"] == "SKIP"
+        assert result["final_unit_count"] == 0
+
+    def test_agent1_vacant_flag_skips_ftth(self):
+        a1 = _make_a1("AUTO_ACCEPT", 92)
+        a1.smarty_vacant = True
+        result = _synthesize(
+            addr=_make_addr(),
+            a1=a1,
+            a2=_a2(), a3=_a3("Single-Family Residential"),
+            a4=_a4("SFH", 90), a5=_a5("SFH", 90),
+        )
+        assert result["final_structure_type"] == "Vacant"
+        assert result["ftth_priority"] == "SKIP"
+
+
 class TestSFHClassification:
     def test_sfh_auto_accept_is_medium(self):
         result = _synthesize(

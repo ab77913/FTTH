@@ -50,7 +50,12 @@ from data_ingestion.utils.agent_db_input import (
     resolve_db_address_line,
     resolve_db_hint_coordinates,
 )
-from data_ingestion.utils.address_match import address_match_percent, finalize_geocoder_confidence, resolve_upload_address_line
+from data_ingestion.utils.address_match import (
+    address_match_percent,
+    extract_house_number,
+    finalize_geocoder_confidence,
+    resolve_upload_address_line,
+)
 from data_ingestion.utils.ai_metadata import persist_ai_metadata
 from data_ingestion.utils.api_result_metadata import persist_provider_results
 from data_ingestion.utils.rate_limiter import RateLimiter
@@ -477,8 +482,7 @@ def _estimated_confidence_cap(result: dict[str, Any], distance_m: float | None) 
 
 
 def _house_number_str(text: str) -> str:
-    m = re.match(r"^\s*(\d+[A-Za-z]?)(?:\s+|$)", (text or "").strip())
-    return m.group(1).upper() if m else ""
+    return extract_house_number(text) or ""
 
 
 def _rooftop_house_number_match(input_address: str, result: dict[str, Any]) -> bool:

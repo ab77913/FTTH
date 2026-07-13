@@ -129,16 +129,25 @@ class BuildingDataAgent:
         # ✅ RULE ENGINE
         rule_result = self.classifier.classify(features)
 
-        if rule_result["hint_confidence"] >= 0.75:
+        # Rule engine returns 0–100; the stub ML layer returns 0–1. Normalize
+        # both to a 0–100 scale before applying the acceptance gate.
+        rule_conf = float(rule_result.get("hint_confidence") or 0.0)
+        if 0.0 < rule_conf <= 1.0:
+            rule_conf *= 100.0
+
+        if rule_conf >= 75.0:
             final = rule_result
             class_source = "RULE"
         else:
             ml_result = self.ml_model.predict(features)
+            ml_conf = float(ml_result.get("confidence") or 0.0)
+            if 0.0 < ml_conf <= 1.0:
+                ml_conf *= 100.0
 
-            if ml_result["confidence"] >= 0.75:
+            if ml_conf >= 75.0:
                 final = {
                     "structure_hint": ml_result["class"],
-                    "hint_confidence": ml_result["confidence"]
+                    "hint_confidence": ml_conf,
                 }
                 class_source = "ML"
             else:
@@ -158,9 +167,14 @@ class BuildingDataAgent:
         # ✅ 🔥 FIX: MDU → MDU_SMALL / MDU_LARGE
         
         structure = result.get("structure_hint")
-        if structure in ["MDU_SMALL", "MDU_LARGE"] and not result.get("unit_count"):
+        if structure in ["MDU", "MDU_SMALL", "MDU_LARGE"] and not result.get("unit_count"):
             area = result.get("footprint_area_m2", 0)
-            result["unit_count"] = self.extractor.compute_unit_count(area, structure)
+            hint = structure if structure in ["MDU_SMALL", "MDU_LARGE"] else "MDU_SMALL"
+            if structure == "MDU_LARGE" or (
+                structure == "MDU" and float(area or 0) > 550
+            ):
+                hint = "MDU_LARGE"
+            result["unit_count"] = self.extractor.compute_unit_count(area, hint)
 
         # ✅ stats tracking (IMPORTANT: use FINAL class, not old one)
         final_class = result.get("structure_hint")

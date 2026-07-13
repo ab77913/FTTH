@@ -1313,6 +1313,7 @@ def analyze_address(
     result.update({
         "latitude": lat,
         "longitude": lon,
+        "streetview_metadata": sv_meta if isinstance(sv_meta, dict) else {},
         "winning_step": winning_step,
         "images_fetched": len(images),
         "paddle_ocr_used": paddle_ocr_used,

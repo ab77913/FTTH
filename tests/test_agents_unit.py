@@ -2794,7 +2794,7 @@ class TestAgent4MatchedFootprintFallback:
             raw_metadata={},
         )
 
-    def test_matched_house_scale_unresolved_footprint_becomes_sfh(self):
+    def test_matched_house_scale_unresolved_footprint_far_match_becomes_sfh(self):
         enriched = {
             "address_id": 1,
             "address": "514 Walnut Dr",
@@ -2817,7 +2817,30 @@ class TestAgent4MatchedFootprintFallback:
         assert payload["class_source"] == "FOOTPRINT_FALLBACK"
         assert "matched_residential_footprint_fallback" in payload["hint_signals"]
 
-    def test_large_unresolved_footprint_stays_unresolved(self):
+    def test_matched_house_scale_unresolved_footprint_close_match_becomes_sfh(self):
+        enriched = {
+            "address_id": 1,
+            "address": "514 Walnut Dr",
+            "lat": 32.0948509,
+            "lon": -84.2493417,
+            "building_matched": True,
+            "structure_hint": "UNRESOLVED",
+            "hint_confidence": 0,
+            "class_source": "HUMAN",
+            "footprint_area_m2": 220,
+            "footprint_match_distance_m": 8,
+            "hint_signals": [],
+        }
+
+        payload = agent4_building._to_agent4_payload(enriched, self._addr(), None)
+
+        assert payload["structure_type"] == "SFH"
+        assert payload["structure_hint"] == "SFU"
+        assert payload["confidence"] >= 80
+        assert payload["class_source"] == "FOOTPRINT_FALLBACK"
+        assert "matched_residential_footprint_fallback" in payload["hint_signals"]
+
+    def test_large_unresolved_footprint_becomes_mdu_large(self):
         enriched = {
             "building_matched": True,
             "structure_hint": "UNRESOLVED",
@@ -2829,8 +2852,9 @@ class TestAgent4MatchedFootprintFallback:
 
         payload = agent4_building._to_agent4_payload(enriched, self._addr(), None)
 
-        assert payload["structure_type"] == "UNRESOLVED"
-        assert payload["class_source"] == "HUMAN"
+        assert payload["structure_type"] == "MDU"
+        assert payload["structure_hint"] == "MDU_LARGE"
+        assert payload["class_source"] == "FOOTPRINT_FALLBACK"
 
 
 class TestAgent4BuildingsAddressMetadata:
@@ -2913,3 +2937,44 @@ class TestAgent4BuildingsAddressMetadata:
         assert ba["building_matched"] is True
         assert "updated_at" in ba
         assert addr.raw_metadata["ADDRESS"] == "514 Walnut Dr, Americus, GA"
+
+
+class TestAgent4MicrosoftRegionTiles:
+    """Border quadkeys exist under both Canada and UnitedStates with different tiles."""
+
+    def test_niagara_prefers_canada_region(self):
+        assert agent4_building._preferred_ms_region_for_records(
+            [{"lat": 43.182603, "lon": -79.259024}]
+        ) == "Canada"
+
+    def test_buffalo_prefers_united_states_region(self):
+        assert agent4_building._preferred_ms_region_for_records(
+            [{"lat": 42.8864, "lon": -78.8784}]
+        ) == "UnitedStates"
+
+    def test_tile_candidates_prefer_canada_then_us_sibling(self):
+        import pandas as pd
+
+        links = pd.DataFrame(
+            [
+                {
+                    "Location": "UnitedStates",
+                    "QuadKey": "30223133",
+                    "Url": "https://example.test/us.csv.gz",
+                },
+                {
+                    "Location": "Canada",
+                    "QuadKey": "30223133",
+                    "Url": "https://example.test/ca.csv.gz",
+                },
+            ]
+        )
+        candidates = agent4_building._tile_candidates_for_quadkey(
+            links, "30223133", preferred_region="Canada"
+        )
+        assert [c["region"] for c in candidates] == ["Canada", "UnitedStates"]
+        assert candidates[0]["url"].endswith("/ca.csv.gz")
+
+    def test_region_cache_token_normalizes_labels(self):
+        assert agent4_building._region_cache_token("United States") == "unitedstates"
+        assert agent4_building._region_cache_token("Canada") == "canada"

@@ -385,11 +385,22 @@ def sync_agent5_streetview_in_raw_metadata(
         return False
 
     meta = dict(addr.raw_metadata or {})
+    sv_meta = result.get("streetview_metadata")
+    if isinstance(sv_meta, dict) and sv_meta:
+        from data_ingestion.utils.agent_api_key_status import persist_streetview_api_summary
+
+        meta = persist_streetview_api_summary(meta, sv_meta)
     old_block = _old_block_from_address(addr, meta)
     meta["old"] = old_block
     meta[GOOGLE_STREET_VIEW_METADATA_KEY] = _streetview_block(
         addr, record, result, meta, confidence, old_block, a1
     )
+    gsv = meta.get(GOOGLE_STREET_VIEW_METADATA_KEY)
+    if isinstance(gsv, dict) and isinstance(sv_meta, dict) and sv_meta:
+        for field in ("status", "pano_id", "date", "api_status"):
+            val = sv_meta.get(field if field != "api_status" else "status")
+            if val and not gsv.get(field):
+                gsv[field] = val
     addr.raw_metadata = meta
     flag_modified(addr, "raw_metadata")
     return True

@@ -16,6 +16,26 @@ def test_validate_and_deduplicate():
     assert summary.invalid_count == 1
 
 
+def test_validate_and_deduplicate_keeps_distinct_street_number_suffixes():
+    records = [
+        CanonicalAddressRecord(
+            source_file="canadapost.csv",
+            raw_address="37A JOHN ST, St. Catharines, ON, L2N4P2",
+            normalized_key="37A JOHN ST|L2N4P",
+        ),
+        CanonicalAddressRecord(
+            source_file="canadapost.csv",
+            raw_address="37B JOHN ST, St. Catharines, ON, L2N4P2",
+            normalized_key="37B JOHN ST|L2N4P",
+        ),
+    ]
+
+    summary = validate_and_deduplicate(records)
+
+    assert summary.valid_count == 2
+    assert summary.duplicate_count == 0
+
+
 def test_validate_and_deduplicate_uses_normalized_address_match():
     records = [
         CanonicalAddressRecord(source_file="x.csv", raw_address="1603 LAFAYETTE STREET", normalized_key="1603 LAFAYETTE ST"),

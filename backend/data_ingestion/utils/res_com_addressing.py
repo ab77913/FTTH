@@ -10,7 +10,7 @@ import re
 import os
 from typing import Any
 
-from data_ingestion.utils.strings import clean_value, normalize_address_key
+from data_ingestion.utils.strings import clean_value, normalize_address_key, normalize_header
 
 _TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}
 _FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
@@ -88,7 +88,19 @@ _FULL_ADDRESS_KEYS = (
     "property_address",
 )
 _STREET_NO_KEYS = ("Street No", "Street Number", "street_no", "street_number", "house_number")
+_STREET_NO_SUFFIX_KEYS = (
+    "Street Number Suffix",
+    "street_number_suffix",
+    "Street No Suffix",
+    "street_no_suffix",
+    "house_number_suffix",
+    "Civic Number Suffix",
+    "civic_number_suffix",
+    "Number Suffix",
+    "number_suffix",
+)
 _STREET_NAME_KEYS = ("Street Name", "street_name", "Street", "street", "road")
+_STREET_TYPE_KEYS = ("Street Type", "street_type", "Street Dir", "street_direction")
 _CITY_KEYS = ("City", "city")
 _STATE_KEYS = ("State", "state")
 _ZIP_KEYS = ("Zip", "ZIP", "zip", "Zip Code", "zip_code", "zipcode", "Postal Code", "postal_code")
@@ -104,12 +116,141 @@ def _text(value: Any) -> str:
     return str(cleaned).strip()
 
 
+def _normalized_meta_lookup(meta: dict[str, Any]) -> dict[str, Any]:
+    lookup: dict[str, Any] = {}
+    for key, value in meta.items():
+        norm_key = normalize_header(key)
+        if norm_key and norm_key not in lookup:
+            lookup[norm_key] = value
+    return lookup
+
+
 def _first(meta: dict[str, Any], keys: tuple[str, ...]) -> str:
     for key in keys:
         value = _text(meta.get(key))
         if value:
             return value
+    lookup = _normalized_meta_lookup(meta)
+    for key in keys:
+        norm_key = normalize_header(key)
+        if not norm_key:
+            continue
+        value = _text(lookup.get(norm_key))
+        if value:
+            return value
     return ""
+
+
+def _combine_street_number(meta: dict[str, Any]) -> str:
+    """Merge civic number + alphabetic suffix (e.g. 37 + A -> 37A for Canada Post)."""
+    street_no = _first(meta, _STREET_NO_KEYS)
+    if not street_no:
+        return ""
+    suffix = _first(meta, _STREET_NO_SUFFIX_KEYS)
+    if not suffix:
+        return street_no
+
+    suffix_text = suffix.strip()
+    if not suffix_text:
+        return street_no
+
+    number_upper = street_no.upper()
+    suffix_upper = suffix_text.upper()
+    if number_upper.endswith(suffix_upper):
+        return street_no
+
+    if len(suffix_text) == 1 and suffix_text.isalpha():
+        return f"{street_no}{suffix_text}"
+
+    if suffix_text.startswith("-") or suffix_text.startswith("/"):
+        return f"{street_no}{suffix_text}"
+
+    return f"{street_no} {suffix_text}"
+
+
+def _build_street_segment(meta: dict[str, Any]) -> str:
+    """Street number (+ suffix) + name + optional street type (e.g. 37A John ST)."""
+    street_no = _combine_street_number(meta)
+    street_name = _first(meta, _STREET_NAME_KEYS)
+    street_type = _first(meta, _STREET_TYPE_KEYS)
+    if not street_no and not street_name:
+        return ""
+
+    parts: list[str] = []
+    if street_no and street_name:
+        parts.append(f"{street_no} {street_name}".strip())
+    elif street_no:
+        parts.append(street_no)
+    elif street_name:
+        parts.append(street_name)
+
+    street_line = parts[0] if parts else ""
+    if street_line and street_type:
+        type_upper = street_type.upper()
+        tokens = street_line.upper().split()
+        if not tokens or tokens[-1] != type_upper:
+            street_line = f"{street_line} {street_type}".strip()
+    return street_line
+
+
+def _civic_components_available(meta: dict[str, Any]) -> bool:
+    return bool(_first(meta, _STREET_NO_KEYS) and _first(meta, _STREET_NAME_KEYS))
+
+
+def _has_distinguishing_civic_detail(meta: dict[str, Any]) -> bool:
+    """True when a street-number suffix must override a generic ADDRESS column."""
+    return bool(_first(meta, _STREET_NO_SUFFIX_KEYS))
+
+
+def _leading_house_number_token(value: str) -> str:
+    match = re.match(r"^\s*(\d+[A-Za-z]?)", value or "")
+    return match.group(1).upper() if match else ""
+
+
+def _build_full_address_from_components(
+    meta: dict[str, Any],
+    *,
+    city: Any = None,
+    state: Any = None,
+    zip_code: Any = None,
+) -> str:
+    street = _build_street_segment(meta)
+    if not street:
+        return ""
+    parts = [street]
+    city_text = _text(city) or _first(meta, _CITY_KEYS)
+    state_text = _text(state) or _first(meta, _STATE_KEYS)
+    zip_text = _text(zip_code) or _first(meta, _ZIP_KEYS)
+    city_state = ", ".join(part for part in (city_text, state_text) if part)
+    if city_state:
+        parts.append(city_state)
+    if zip_text:
+        parts.append(zip_text[:10])
+    return ", ".join(parts)
+
+
+def _component_address_preferred(
+    meta: dict[str, Any],
+    *,
+    raw_address: Any = None,
+) -> bool:
+    if not _civic_components_available(meta):
+        return False
+    if _has_distinguishing_civic_detail(meta):
+        return True
+    built_segment = _build_street_segment(meta)
+    combined_no = _combine_street_number(meta).upper().replace(" ", "")
+    if not combined_no:
+        return False
+    for value in (_first(meta, _FULL_ADDRESS_KEYS), raw_address):
+        text = _text(value)
+        if not looks_like_real_address(text):
+            continue
+        street_part = text.split(",", 1)[0].strip()
+        full_no = _leading_house_number_token(street_part)
+        if full_no and full_no != combined_no:
+            return True
+    return False
 
 
 def compact_address_type(value: Any) -> str:
@@ -168,14 +309,34 @@ def build_address_from_metadata(
 
     metadata = meta if isinstance(meta, dict) else {}
 
+    if _component_address_preferred(metadata, raw_address=raw_address):
+        built = _build_full_address_from_components(
+            metadata,
+            city=city,
+            state=state,
+            zip_code=zip_code,
+        )
+        if built:
+            return built
+
     for value in (_first(metadata, _FULL_ADDRESS_KEYS), raw_address):
         if looks_like_real_address(value):
             return _text(value)
 
-    street_no = _first(metadata, _STREET_NO_KEYS)
+    if _civic_components_available(metadata):
+        built = _build_full_address_from_components(
+            metadata,
+            city=city,
+            state=state,
+            zip_code=zip_code,
+        )
+        if built:
+            return built
+
+    street_no = _combine_street_number(metadata)
     street_name = _first(metadata, _STREET_NAME_KEYS)
     if street_no and street_name:
-        street = f"{street_no} {street_name}".strip()
+        street = _build_street_segment(metadata)
         parts = [street]
         city_text = _text(city) or _first(metadata, _CITY_KEYS)
         state_text = _text(state) or _first(metadata, _STATE_KEYS)
@@ -203,14 +364,18 @@ def build_street_line_from_metadata(
     if not meta and not raw_address:
         return ""
     metadata = meta if isinstance(meta, dict) else {}
+    if _component_address_preferred(metadata, raw_address=raw_address):
+        built = _build_street_segment(metadata)
+        if built:
+            return built
     for value in (_first(metadata, _FULL_ADDRESS_KEYS), raw_address):
         text = _text(value)
         if looks_like_real_address(text):
             return text.split(",", 1)[0].strip()
-    street_no = _first(metadata, _STREET_NO_KEYS)
+    street_no = _combine_street_number(metadata)
     street_name = _first(metadata, _STREET_NAME_KEYS)
     if street_no and street_name:
-        return f"{street_no} {street_name}".strip()
+        return _build_street_segment(metadata)
     return ""
 
 
