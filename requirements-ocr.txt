@@ -2,8 +2,8 @@
 # PaddlePaddle wheels are not available for every Python release on Windows.
 # Python 3.11/3.12 is recommended if PaddleOCR must run locally.
 # PaddleOCR 2.7.x requires NumPy 1.x (NumPy 2.0 removed np.sctypes).
-numpy>=1.26.0,<2.0.0
-opencv-python-headless>=4.8.0,<4.11.0
-paddleocr>=2.7.0; python_version < "3.13"
-paddlepaddle>=2.6.0; python_version < "3.13"
+numpy>=2.2.6,<3.0.0
+opencv-python-headless>=5.0.0.93,<5.1.0
+paddleocr>=3.7.0; python_version < "3.13"
+paddlepaddle>=3.3.1; python_version < "3.13"
 pytesseract>=0.3.13
